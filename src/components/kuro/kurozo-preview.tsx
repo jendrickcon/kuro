@@ -1,18 +1,9 @@
-const PREVIEW_HOSTS_TWO = [
-  { id: "maya", name: "Maya", role: "Explainer", accent: "#2563EB" },
-  { id: "leo", name: "Leo", role: "Learner", accent: "#D97706" },
-] as const;
+import { getFixtureByHostCount } from "@/lib/episode/fixtures";
 
-const PREVIEW_HOSTS_THREE = [
-  { id: "maya", name: "Maya", role: "Explainer", accent: "#2563EB" },
-  { id: "sam", name: "Sam", role: "Skeptic", accent: "#7C3AED" },
-  { id: "leo", name: "Leo", role: "Learner", accent: "#D97706" },
-] as const;
-
-/** Lightweight shared-desk vignette showing 2 or 3 Kurozos without isolated cards. */
+/** Lightweight shared-desk vignette rendered dynamically from fixture hosts[]. */
 export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
-  const hosts = hostCount === 3 ? PREVIEW_HOSTS_THREE : PREVIEW_HOSTS_TWO;
-  const summaryText = hosts.map((h) => `${h.name} (${h.role})`).join(" · ");
+  const { hosts } = getFixtureByHostCount(hostCount);
+  const summaryText = hosts.map((host) => `${host.name} (${host.role})`).join(" · ");
 
   return (
     <section
@@ -27,7 +18,7 @@ export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
           </p>
         </div>
         <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-0.5 text-[11px] font-semibold text-slate-100">
-          {hostCount} hosts
+          {hosts.length} hosts
         </span>
       </div>
 
@@ -42,7 +33,7 @@ export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
 
         <div className="flex w-full items-end justify-center gap-5 sm:gap-8">
           {hosts.map((host, idx) => {
-            const elevated = hostCount === 3 && idx === 1;
+            const elevated = hosts.length === 3 && idx === 1;
             return (
               <div
                 key={host.id}
@@ -50,7 +41,7 @@ export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
               >
                 <div
                   className="flex h-7 w-9 flex-col items-center justify-center rounded-t-full rounded-b-lg border-2 border-white"
-                  style={{ backgroundColor: host.accent }}
+                  style={{ backgroundColor: host.accentColor }}
                 >
                   <div className="flex gap-1.5">
                     <span className="h-1 w-1 rounded-full bg-slate-950" />
@@ -59,7 +50,7 @@ export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
                 </div>
                 <div
                   className="-mt-0.5 h-3 w-7 rounded-t-md border-x-2 border-t-2 border-white/90"
-                  style={{ backgroundColor: host.accent }}
+                  style={{ backgroundColor: host.accentColor }}
                 />
               </div>
             );
@@ -69,7 +60,7 @@ export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
         <div className="-mx-3 h-2.5 w-[106%] rounded-t-[50%] border-t-2 border-slate-400 bg-slate-700" />
       </div>
 
-      <p className="mt-2 text-center text-xs font-medium text-slate-200">{summaryText}</p>
+      <p className="mt-2 text-center text-xs font-medium capitalize text-slate-200">{summaryText}</p>
     </section>
   );
 }

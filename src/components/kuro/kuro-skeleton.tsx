@@ -12,12 +12,13 @@ import {
   type Tone,
 } from "@contracts/episode.schema";
 import { CreationForm } from "@/components/kuro/creation-form";
-import { EpisodePreview } from "@/components/kuro/episode-preview";
 import { RecoverableErrorCard } from "@/components/kuro/form-error";
 import { GenerationStatus } from "@/components/kuro/generation-status";
+import { EpisodePlayer } from "@/components/kuro/player/episode-player";
 import { getSampleEpisode } from "@/lib/episode/fixtures";
 
 interface ResultState {
+  instanceId: number;
   episode: Episode;
   source: "mock" | "sample";
   requestedOptions?: {
@@ -40,6 +41,7 @@ export function KuroSkeleton() {
   const [result, setResult] = useState<ResultState | null>(null);
 
   const isSubmittingRef = useRef(false);
+  const episodeCounterRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const errorCardRef = useRef<HTMLDivElement | null>(null);
 
@@ -159,7 +161,9 @@ export function KuroSkeleton() {
         return;
       }
 
+      episodeCounterRef.current += 1;
       setResult({
+        instanceId: episodeCounterRef.current,
         episode: episodeCheck.data,
         source: "mock",
         requestedOptions: { tone, length, hostCount },
@@ -181,16 +185,27 @@ export function KuroSkeleton() {
     setFieldError(null);
     setRequestError(null);
     const sample = EpisodeSchema.parse(getSampleEpisode());
-    setResult({ episode: sample, source: "sample" });
+    episodeCounterRef.current += 1;
+    setResult({
+      instanceId: episodeCounterRef.current,
+      episode: sample,
+      source: "sample",
+    });
+  }
+
+  function handleBackToForm() {
+    setResult(null);
+    focusTextarea();
   }
 
   if (result) {
     return (
-      <EpisodePreview
+      <EpisodePlayer
+        key={result.instanceId}
         episode={result.episode}
         source={result.source}
         requestedOptions={result.requestedOptions}
-        onBack={() => setResult(null)}
+        onBack={handleBackToForm}
       />
     );
   }
