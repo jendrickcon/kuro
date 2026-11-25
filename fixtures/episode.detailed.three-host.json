@@ -1,0 +1,160 @@
+{
+  "id": "ep_mock_detailed_3h_001",
+  "title": "Opportunity Cost: Studying, Transit, and Work",
+  "topic": "Explain opportunity cost using a college student choosing among studying, commuting, and part-time work.",
+  "tone": "serious",
+  "length": "detailed",
+  "status": "mock",
+  "hosts": [
+    {
+      "id": "host_maya",
+      "name": "Maya",
+      "role": "explainer",
+      "voiceId": "voice_provisional_explainer_01",
+      "accentColor": "#2563EB",
+      "avatarId": "avatar_explainer_01"
+    },
+    {
+      "id": "host_leo",
+      "name": "Leo",
+      "role": "learner",
+      "voiceId": "voice_provisional_learner_01",
+      "accentColor": "#D97706",
+      "avatarId": "avatar_learner_01"
+    },
+    {
+      "id": "host_sam",
+      "name": "Sam",
+      "role": "skeptic",
+      "voiceId": "voice_provisional_skeptic_01",
+      "accentColor": "#059669",
+      "avatarId": "avatar_skeptic_01"
+    }
+  ],
+  "segments": [
+    {
+      "id": "seg_01",
+      "order": 0,
+      "speakerId": "host_maya",
+      "text": "Opportunity cost measures the value of the best alternative you give up whenever scarce time or money forces a choice.",
+      "emotion": "explaining",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_02",
+      "order": 1,
+      "speakerId": "host_leo",
+      "text": "In college, my scarcest resource is weekday evenings. Between commuting, a part-time shift, and studying, something always gets cut.",
+      "emotion": "curious",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_03",
+      "order": 2,
+      "speakerId": "host_maya",
+      "text": "Trace one typical evening block. Once transit eats an hour, the remaining window forces a direct trade-off between wages and exam prep.",
+      "emotion": "explaining",
+      "visualCue": {
+        "type": "timeline",
+        "title": "One Commuter Evening",
+        "points": [
+          { "label": "5:00 PM", "description": "One-hour bus ride home from campus" },
+          { "label": "6:00 PM", "description": "Choose shift wages or exam review" },
+          { "label": "8:00 PM", "description": "Limited energy left before sleep" }
+        ]
+      }
+    },
+    {
+      "id": "seg_04",
+      "order": 3,
+      "speakerId": "host_sam",
+      "text": "Hold on—what if a student genuinely needs the shift wages to pay for next week's fare? Isn't calling that a cost misleading?",
+      "emotion": "reacting",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_05",
+      "order": 4,
+      "speakerId": "host_maya",
+      "text": "That is a sharp distinction. Taking the shift can still be the rational decision; opportunity cost does not mean the choice was wrong.",
+      "emotion": "explaining",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_06",
+      "order": 5,
+      "speakerId": "host_leo",
+      "text": "So economists separate explicit costs like bus fare from implicit costs like the study hours you gave up?",
+      "emotion": "curious",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_07",
+      "order": 6,
+      "speakerId": "host_maya",
+      "text": "Correct. When you evaluate a decision carefully, follow three quick steps so you only count the single next-best option.",
+      "emotion": "explaining",
+      "visualCue": {
+        "type": "process",
+        "title": "Evaluating a Trade-Off",
+        "steps": [
+          { "label": "List feasible choices", "description": "Identify what actually fits your open hours" },
+          { "label": "Rank the next-best", "description": "Pick the single strongest alternative you skip" },
+          { "label": "Compare full payoff", "description": "Weigh both cash and time outcomes together" }
+        ]
+      }
+    },
+    {
+      "id": "seg_08",
+      "order": 7,
+      "speakerId": "host_sam",
+      "text": "Okay, then what about the commute itself? You cannot skip getting home, so does commuting even have an opportunity cost?",
+      "emotion": "curious",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_09",
+      "order": 8,
+      "speakerId": "host_maya",
+      "text": "Yes—both in route choice and in how you spend those minutes. A cheaper slower route trades extra minutes for lower fare.",
+      "emotion": "explaining",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_10",
+      "order": 9,
+      "speakerId": "host_leo",
+      "text": "And during the ride, scrolling social media versus listening to a study recap is another mini trade-off inside the same hour.",
+      "emotion": "explaining",
+      "visualCue": {
+        "type": "comparison",
+        "title": "45-Minute Bus Ride",
+        "left": {
+          "label": "Passive Scroll",
+          "value": "Instant rest, zero exam progress"
+        },
+        "right": {
+          "label": "Audio Recap",
+          "value": "Review core terms before class"
+        }
+      }
+    },
+    {
+      "id": "seg_11",
+      "order": 10,
+      "speakerId": "host_sam",
+      "text": "Fair point. Even when you cannot eliminate the constraint, seeing the implicit trade-off helps you spend scarce hours intentionally.",
+      "emotion": "neutral",
+      "visualCue": { "type": "none" }
+    },
+    {
+      "id": "seg_12",
+      "order": 11,
+      "speakerId": "host_maya",
+      "text": "That is the core takeaway: every study, transit, and work choice carries an explicit price and an implicit next-best alternative.",
+      "emotion": "neutral",
+      "visualCue": { "type": "none" }
+    }
+  ],
+  "createdAt": "2026-11-26T00:00:00.000Z"
+}

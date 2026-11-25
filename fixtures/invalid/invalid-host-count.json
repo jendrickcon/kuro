@@ -1,0 +1,29 @@
+{
+  "id": "ep_invalid_host_count_001",
+  "title": "Single Host Episode",
+  "topic": "Explain opportunity cost for a college student.",
+  "tone": "casual",
+  "length": "quick",
+  "status": "mock",
+  "hosts": [
+    {
+      "id": "host_maya",
+      "name": "Maya",
+      "role": "explainer",
+      "voiceId": "voice_provisional_explainer_01",
+      "accentColor": "#2563EB",
+      "avatarId": "avatar_explainer_01"
+    }
+  ],
+  "segments": [
+    { "id": "seg_01", "order": 0, "speakerId": "host_maya", "text": "Turn one explaining scarcity in college schedules.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_02", "order": 1, "speakerId": "host_maya", "text": "Turn two covering part-time work choices.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_03", "order": 2, "speakerId": "host_maya", "text": "Turn three comparing cash and exam readiness.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_04", "order": 3, "speakerId": "host_maya", "text": "Turn four discussing bus commute trade-offs.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_05", "order": 4, "speakerId": "host_maya", "text": "Turn five highlighting the next-best alternative rule.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_06", "order": 5, "speakerId": "host_maya", "text": "Turn six contrasting explicit and implicit costs.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_07", "order": 6, "speakerId": "host_maya", "text": "Turn seven applying the rule to study breaks.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_08", "order": 7, "speakerId": "host_maya", "text": "Turn eight wrapping up the core definition.", "emotion": "neutral", "visualCue": { "type": "none" } }
+  ],
+  "createdAt": "2026-11-26T00:00:00.000Z"
+}
