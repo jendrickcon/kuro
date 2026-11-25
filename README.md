@@ -12,27 +12,26 @@ Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a diff
 
 ## Current Status
 
-- **Phase:** `WP-004` mock Next.js application skeleton implemented on `feat/wp-004-app-skeleton` (`WP-001`, `WP-002`, and `WP-003A` merged to `main`; `WP-003B` live Gemini/TTS spike pending credentials).
-- **Next:** Vercel preview verification, `WP-003B` live AI/audio spike, and `WP-005` / `WP-007` UI polish.
+- **Milestone (`WP-008`):** Verified mock-powered Next.js application (`WP-001`–`WP-005` and `WP-007` merged on `main`; `WP-008` QA on `test/wp-008-mock-milestone`). Vercel deployment pending owner authentication.
+- **Pending live AI (`WP-003B` / `WP-009`+):** Live Gemini script generation, hosted segmented TTS voices, and stitched audio downloads are not connected yet.
 
-## Core MVP
+## Core MVP (Mock Milestone Active)
 
-- Input a topic or pasted study text; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** (default) or **3** hosts.
-- Dynamic `hosts[]` conversation script with distinct per-host voices via segmented TTS.
-- Sequential turn playback with active-speaker animation, synchronized captions, and one template-driven contextual visual.
-- Downloadable combined audio (via verified stitching), downloadable transcript, and a polished pre-generated backup episode.
+- Input 10–2,500 chars; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** or **3** hosts.
+- Production studio player (`Try sample episode` fallback or validated mock API) with shared-desk **Kurozos**, 5 contextual monitor visuals, timed silent playback, synchronized captions, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
+- Live multi-host Gemini scripts and segmented/stitched audio follow `WP-003B`.
 
 See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusions, and roadmap.
 
 ## Tech Stack
 
 - **App:** Next.js (App Router), React, TypeScript, Tailwind CSS, Zod
-- **AI & Audio:** One verified Gemini Flash-class model for structured scripts + segmented TTS with verified stitching
-- **Hosting & Workflow:** Vercel, GitHub
+- **AI & Audio (Pending `WP-003B`):** One verified Gemini Flash-class model + segmented TTS with verified stitching
+- **Hosting & Workflow:** Vercel (pending owner auth), GitHub
 
 ## Local Setup
 
-Prerequisites: Node.js 24+ and npm. No API key is needed for WP-004 mock mode (`GEMINI_API_KEY` in `.env.example` is server-side only for WP-003B/live AI; never prefix with `NEXT_PUBLIC_`).
+Prerequisites: Node.js 24+ and npm. Zero API keys are needed for the mock milestone (`GEMINI_API_KEY` in `.env.example` is server-side only for `WP-003B`/live AI; never prefix with `NEXT_PUBLIC_`).
 
 ```bash
 npm install
@@ -41,6 +40,7 @@ npm run typecheck
 npm run lint
 npm run test:schema
 npm run build
+npm run start
 ```
 
 ## Team Lanes
