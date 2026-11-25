@@ -12,8 +12,8 @@ Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a diff
 
 ## Current Status
 
-- **Phase:** `WP-001` complete (source-of-truth documentation and parallel sprint handoffs).
-- **Next:** `WP-002` (UI/UX research & wireframes) and `WP-003` (AI/audio technical spike) run in parallel before `WP-004` initializes the Next.js application.
+- **Phase:** `WP-004` mock Next.js application skeleton implemented on `feat/wp-004-app-skeleton` (`WP-001`, `WP-002`, and `WP-003A` merged to `main`; `WP-003B` live Gemini/TTS spike pending credentials).
+- **Next:** Vercel preview verification, `WP-003B` live AI/audio spike, and `WP-005` / `WP-007` UI polish.
 
 ## Core MVP
 
@@ -26,16 +26,22 @@ See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusion
 
 ## Tech Stack
 
-- **App:** Next.js (App Router), React, TypeScript, Tailwind CSS, selected shadcn/ui components, Zod
+- **App:** Next.js (App Router), React, TypeScript, Tailwind CSS, Zod
 - **AI & Audio:** One verified Gemini Flash-class model for structured scripts + segmented TTS with verified stitching
 - **Hosting & Workflow:** Vercel, GitHub
 
 ## Local Setup
 
-Application initialization (`Next.js`, dependencies, and `.env.example`) belongs to `WP-004`. Once initialized:
+Prerequisites: Node.js 24+ and npm. No API key is needed for WP-004 mock mode (`GEMINI_API_KEY` in `.env.example` is server-side only for WP-003B/live AI; never prefix with `NEXT_PUBLIC_`).
 
-1. Copy `.env.example` to `.env.local` and supply server-side API keys (never commit real secrets).
-2. Install dependencies and start the local Next.js dev server (exact commands will be finalized in `WP-004`).
+```bash
+npm install
+npm run dev
+npm run typecheck
+npm run lint
+npm run test:schema
+npm run build
+```
 
 ## Team Lanes
 
