@@ -6,6 +6,24 @@
   const MIN_CHARS = 10;
   const MAX_CHARS = 2500;
 
+  const ENV_META = {
+    studio: {
+      label: "Studio",
+      stageTitle: "KURO STUDIO",
+      monitorLabel: "Studio Monitor",
+    },
+    study: {
+      label: "Study Room",
+      stageTitle: "KURO STUDY ROOM",
+      monitorLabel: "Study Board",
+    },
+    commute: {
+      label: "Commute Lounge",
+      stageTitle: "KURO COMMUTE LOUNGE",
+      monitorLabel: "Transit Display",
+    },
+  };
+
   const SAMPLE_EPISODES = {
     twoHostQuick: {
       id: "proto_quick_2h",
@@ -123,20 +141,20 @@
           voiceHint: 0,
         },
         {
-          id: "host_leo",
-          name: "Leo",
-          role: "learner",
-          variant: "curious",
-          accentColor: "#D97706",
-          voiceHint: 1,
-        },
-        {
           id: "host_sam",
           name: "Sam",
           role: "skeptic",
           variant: "challenger",
           accentColor: "#7C3AED",
           voiceHint: 2,
+        },
+        {
+          id: "host_leo",
+          name: "Leo",
+          role: "learner",
+          variant: "curious",
+          accentColor: "#D97706",
+          voiceHint: 1,
         },
       ],
       segments: [
@@ -260,6 +278,7 @@
     tone: "casual",
     length: "quick",
     hostCount: 2,
+    environment: "studio",
     episode: null,
     submittedNote: "",
     turnIndex: 0,
@@ -280,7 +299,9 @@
     viewPlayer: document.getElementById("view-player"),
     headerActions: document.getElementById("header-actions"),
     btnBackCreate: document.getElementById("btn-back-create"),
-    createPreview: document.getElementById("create-kurozo-preview"),
+    createStudioPreview: document.getElementById("create-studio-preview"),
+    createEnvBadge: document.getElementById("create-env-badge"),
+    createKurozoStage: document.getElementById("create-kurozo-stage"),
     createForm: document.getElementById("create-form"),
     topicInput: document.getElementById("topic-input"),
     charCounter: document.getElementById("char-counter"),
@@ -301,8 +322,16 @@
     btnSwitch2: document.getElementById("btn-switch-2"),
     btnSwitch3: document.getElementById("btn-switch-3"),
     speechNotice: document.getElementById("speech-notice"),
-    stageStatusText: document.getElementById("stage-status-text"),
-    hostGrid: document.getElementById("host-grid"),
+    studioStage: document.getElementById("studio-stage"),
+    onAirBadge: document.getElementById("on-air-badge"),
+    studioEnvTitle: document.getElementById("studio-env-title"),
+    studioTurnHud: document.getElementById("studio-turn-hud"),
+    hostStage: document.getElementById("host-stage"),
+    deskNameplates: document.getElementById("desk-nameplates"),
+    monitorLabel: document.getElementById("monitor-label"),
+    visualTypeBadge: document.getElementById("visual-type-badge"),
+    visualBody: document.getElementById("visual-body"),
+    captionPanel: document.getElementById("caption-panel"),
     captionSpeaker: document.getElementById("caption-speaker"),
     captionTurnLabel: document.getElementById("caption-turn-label"),
     captionText: document.getElementById("caption-text"),
@@ -319,25 +348,25 @@
     btnVoiceToggle: document.getElementById("btn-voice-toggle"),
     voiceToggleState: document.getElementById("voice-toggle-state"),
     btnDownloadTranscript: document.getElementById("btn-download-transcript"),
-    visualTypeBadge: document.getElementById("visual-type-badge"),
-    visualBody: document.getElementById("visual-body"),
   };
 
   function getHostsForCount(count) {
     return count === 3 ? SAMPLE_EPISODES.threeHostDetailed.hosts : SAMPLE_EPISODES.twoHostQuick.hosts;
   }
 
-  function createKurozoFigure(variant, accentColor, compact) {
-    const fig = document.createElement("div");
-    fig.className = `kurozo-figure kurozo--${variant || "explainer"}${compact ? " kurozo-figure--sm" : ""}`;
-    fig.setAttribute("aria-hidden", "true");
-    fig.style.setProperty("--host-accent", accentColor || "#2563EB");
+  function buildKurozoBody(host) {
+    const rig = document.createElement("div");
+    rig.className = `kurozo-rig kurozo--${host.variant || "explainer"}`;
+    rig.setAttribute("aria-hidden", "true");
+
+    const upper = document.createElement("div");
+    upper.className = "kurozo-upper";
 
     const crest = document.createElement("div");
     crest.className = "kurozo-crest";
 
-    const body = document.createElement("div");
-    body.className = "kurozo-body";
+    const head = document.createElement("div");
+    head.className = "kurozo-head";
 
     const eyes = document.createElement("div");
     eyes.className = "kurozo-eyes";
@@ -355,68 +384,113 @@
       mouth.appendChild(bar);
     }
 
-    body.append(eyes, mouth);
+    head.append(eyes, mouth);
 
-    const shadow = document.createElement("div");
-    shadow.className = "kurozo-shadow";
+    const torsoWrap = document.createElement("div");
+    torsoWrap.className = "kurozo-torso-wrap";
 
-    fig.append(crest, body, shadow);
-    return fig;
+    const armL = document.createElement("span");
+    armL.className = "kurozo-arm kurozo-arm--left";
+    const handL = document.createElement("span");
+    handL.className = "kurozo-hand";
+    armL.appendChild(handL);
+
+    const torso = document.createElement("div");
+    torso.className = "kurozo-torso";
+    const core = document.createElement("span");
+    core.className = "kurozo-core-badge";
+    torso.appendChild(core);
+
+    const armR = document.createElement("span");
+    armR.className = "kurozo-arm kurozo-arm--right";
+    const handR = document.createElement("span");
+    handR.className = "kurozo-hand";
+    armR.appendChild(handR);
+
+    torsoWrap.append(armL, torso, armR);
+    upper.append(crest, head, torsoWrap);
+
+    const lower = document.createElement("div");
+    lower.className = "kurozo-lower";
+
+    rig.append(upper, lower);
+    return rig;
   }
 
-  function renderCreateKurozoPreview() {
-    el.createPreview.replaceChildren();
-    const hosts = getHostsForCount(state.hostCount);
-    hosts.forEach((host) => {
-      const card = document.createElement("div");
-      card.className = "kurozo-mini-card";
-      card.style.setProperty("--host-accent", host.accentColor);
+  function renderCreateStudioPreview() {
+    const meta = ENV_META[state.environment] || ENV_META.studio;
+    el.createStudioPreview.dataset.env = state.environment;
+    el.createEnvBadge.textContent = meta.label;
+    el.createKurozoStage.replaceChildren();
 
-      const fig = createKurozoFigure(host.variant, host.accentColor, true);
-      const name = document.createElement("span");
-      name.className = "kurozo-mini-name";
-      name.textContent = host.name;
-
-      const role = document.createElement("span");
-      role.className = "kurozo-mini-role";
-      role.textContent = host.role;
-
-      card.append(fig, name, role);
-      el.createPreview.appendChild(card);
+    getHostsForCount(state.hostCount).forEach((host) => {
+      const unit = document.createElement("div");
+      unit.className = "mini-host-unit";
+      unit.style.setProperty("--host-accent", host.accentColor);
+      const rig = buildKurozoBody(host);
+      const tag = document.createElement("span");
+      tag.className = "mini-host-tag";
+      tag.textContent = host.name;
+      unit.append(rig, tag);
+      el.createKurozoStage.appendChild(unit);
     });
   }
 
-  function renderKurozo(host, hostState) {
-    const card = document.createElement("article");
-    card.className = "kurozo-card";
-    card.dataset.state = hostState;
-    card.style.setProperty("--host-accent", host.accentColor);
+  function renderEmbodiedKurozo(host, hostState, lookDir) {
+    const seat = document.createElement("div");
+    seat.className = "host-seat";
+    seat.dataset.state = hostState;
+    seat.dataset.look = lookDir;
+    seat.style.setProperty("--host-accent", host.accentColor);
 
-    const stateLabelMap = {
+    const rig = buildKurozoBody(host);
+
+    const mic = document.createElement("div");
+    mic.className = "studio-mic";
+    mic.setAttribute("aria-hidden", "true");
+    const micHead = document.createElement("div");
+    micHead.className = "mic-head";
+    const led = document.createElement("span");
+    led.className = "mic-led";
+    micHead.appendChild(led);
+    const stand = document.createElement("div");
+    stand.className = "mic-stand";
+    mic.append(micHead, stand);
+
+    seat.append(rig, mic);
+    return seat;
+  }
+
+  function renderDeskNameplate(host, hostState) {
+    const plate = document.createElement("div");
+    plate.className = "nameplate";
+    plate.dataset.state = hostState;
+    plate.style.setProperty("--host-accent", host.accentColor);
+
+    const labels = {
       speaking: "● Speaking",
-      paused: "Paused",
+      listening: "Listening",
       reacting: "Reacting",
+      paused: "Paused",
       idle: "Idle",
     };
-    const stateLabel = stateLabelMap[hostState] || "Idle";
-    card.setAttribute("aria-label", `${host.name}, ${host.role}, ${stateLabel.replace("● ", "")}`);
-
-    const fig = createKurozoFigure(host.variant, host.accentColor, false);
+    const labelText = labels[hostState] || "Idle";
+    plate.setAttribute("aria-label", `${host.name}, ${host.role}, ${labelText.replace("● ", "")}`);
 
     const name = document.createElement("p");
-    name.className = "kurozo-name";
+    name.className = "nameplate-name";
     name.textContent = host.name;
 
     const role = document.createElement("p");
-    role.className = "kurozo-role";
+    role.className = "nameplate-role";
     role.textContent = host.role;
 
-    const badge = document.createElement("span");
-    badge.className = "kurozo-state-pill";
-    badge.textContent = stateLabel;
+    const pill = document.createElement("span");
+    pill.className = "nameplate-pill";
+    pill.textContent = labelText;
 
-    card.append(fig, name, role, badge);
-    return card;
+    plate.append(name, role, pill);
+    return plate;
   }
 
   function normalizeVisualCue(cue) {
@@ -432,17 +506,28 @@
     return { type: "none" };
   }
 
-  function renderContextualVisual(rawCue) {
+  function renderStudioMonitor(rawCue, episodeTitle) {
     const cue = normalizeVisualCue(rawCue);
-    el.visualTypeBadge.textContent = cue.type;
+    el.visualTypeBadge.textContent = cue.type === "none" ? "Waveform" : cue.type;
     el.visualBody.replaceChildren();
 
     if (cue.type === "none") {
-      const p = document.createElement("p");
-      p.className = "visual-none";
-      p.textContent = "No contextual visual on this turn. Listen or follow the captions.";
-      el.visualBody.appendChild(p);
-      return;
+      const wrap = document.createElement("div");
+      wrap.className = "monitor-idle-screen";
+      const title = document.createElement("p");
+      title.className = "monitor-idle-title";
+      title.textContent = episodeTitle || "Kuro Studio Live";
+      const wave = document.createElement("div");
+      wave.className = "monitor-waveform";
+      wave.setAttribute("aria-hidden", "true");
+      for (let i = 0; i < 4; i += 1) {
+        const bar = document.createElement("span");
+        bar.className = "monitor-wave-bar";
+        wave.appendChild(bar);
+      }
+      wrap.append(title, wave);
+      el.visualBody.appendChild(wrap);
+      return cue.type;
     }
 
     const title = document.createElement("h3");
@@ -466,7 +551,7 @@
         grid.appendChild(box);
       });
       el.visualBody.appendChild(grid);
-      return;
+      return cue.type;
     }
 
     if (cue.type === "timeline") {
@@ -485,7 +570,7 @@
         list.appendChild(li);
       });
       el.visualBody.appendChild(list);
-      return;
+      return cue.type;
     }
 
     if (cue.type === "process") {
@@ -509,7 +594,7 @@
         list.appendChild(li);
       });
       el.visualBody.appendChild(list);
-      return;
+      return cue.type;
     }
 
     if (cue.type === "fact-card") {
@@ -524,6 +609,28 @@
       box.append(val, exp);
       el.visualBody.appendChild(box);
     }
+
+    return cue.type;
+  }
+
+  function applyEnvironmentUI() {
+    const envMeta = ENV_META[state.environment] || ENV_META.studio;
+    document.querySelectorAll("[data-env-choice]").forEach((btn) => {
+      const active = btn.dataset.envChoice === state.environment;
+      btn.setAttribute("aria-pressed", String(active));
+      const clean = btn.textContent.replace(/^✓\s*/, "");
+      btn.textContent = active ? `✓ ${clean}` : clean;
+    });
+    el.studioStage.dataset.env = state.environment;
+    el.studioEnvTitle.textContent = envMeta.stageTitle;
+    el.monitorLabel.textContent = envMeta.monitorLabel;
+    renderCreateStudioPreview();
+  }
+
+  function setEnvironment(env) {
+    if (!ENV_META[env]) return;
+    state.environment = env;
+    applyEnvironmentUI();
   }
 
   function loadVoices() {
@@ -605,7 +712,8 @@
     const idx = Math.max(0, Math.min(state.turnIndex, total - 1));
     state.turnIndex = idx;
     const turn = ep.segments[idx];
-    const activeHost = ep.hosts.find((h) => h.id === turn.speakerId) || ep.hosts[0];
+    const activeSeatIdx = Math.max(0, ep.hosts.findIndex((h) => h.id === turn.speakerId));
+    const activeHost = ep.hosts[activeSeatIdx] || ep.hosts[0];
 
     el.episodeTitle.textContent = ep.title;
     el.episodeMeta.textContent = `${ep.tone} · ${ep.length} · ${ep.hosts.length} Kurozos · ${total} turns`;
@@ -616,30 +724,70 @@
     el.btnSwitch2.setAttribute("aria-pressed", String(ep.hosts.length === 2));
     el.btnSwitch3.setAttribute("aria-pressed", String(ep.hosts.length === 3));
 
-    // Host grid
-    el.hostGrid.className = `host-grid ${ep.hosts.length === 3 ? "host-grid--3" : "host-grid--2"}`;
-    el.hostGrid.replaceChildren();
-    ep.hosts.forEach((host) => {
+    // Render monitor first to determine camera focus cleanly
+    const cueType = renderStudioMonitor(turn.visualCue, ep.title);
+
+    // Studio HUD & Camera attributes
+    const envMeta = ENV_META[state.environment] || ENV_META.studio;
+    el.studioStage.dataset.env = state.environment;
+    el.studioStage.dataset.hosts = String(ep.hosts.length);
+    el.studioStage.dataset.playback = state.playbackState;
+    el.studioEnvTitle.textContent = envMeta.stageTitle;
+    el.monitorLabel.textContent = envMeta.monitorLabel;
+
+    let camera = "wide";
+    if (state.playbackState === "playing") {
+      camera = cueType !== "none" ? "visual-focus" : "speaker-focus";
+    } else if (cueType !== "none" && state.playbackState !== "completed") {
+      camera = "visual-focus";
+    }
+    el.studioStage.dataset.camera = camera;
+
+    const airMap = {
+      playing: { text: "● ON AIR", attr: "live" },
+      paused: { text: "PAUSED", attr: "paused" },
+      completed: { text: "Episode complete", attr: "complete" },
+      idle: { text: "STANDBY", attr: "standby" },
+    };
+    const airState = airMap[state.playbackState] || airMap.idle;
+    el.onAirBadge.textContent = airState.text;
+    el.onAirBadge.dataset.air = airState.attr;
+
+    const pad = (n) => String(n).padStart(2, "0");
+    el.studioTurnHud.textContent = `${pad(idx + 1)} / ${pad(total)}`;
+
+    // Embodied Kurozos + aligned desk nameplates
+    el.hostStage.className = `studio-hosts ${ep.hosts.length === 3 ? "studio-hosts--3" : "studio-hosts--2"}`;
+    el.hostStage.replaceChildren();
+    el.deskNameplates.replaceChildren();
+
+    ep.hosts.forEach((host, seatIdx) => {
       let hostState = "idle";
-      if (state.playbackState === "playing" && host.id === turn.speakerId) {
-        hostState = "speaking";
+      if (state.playbackState === "playing") {
+        if (host.id === turn.speakerId) {
+          hostState = "speaking";
+        } else if (state.reactingHostId === host.id) {
+          hostState = "reacting";
+        } else {
+          hostState = "listening";
+        }
       } else if (state.playbackState === "paused" && host.id === turn.speakerId) {
         hostState = "paused";
       } else if (state.reactingHostId === host.id) {
         hostState = "reacting";
       }
-      el.hostGrid.appendChild(renderKurozo(host, hostState));
+
+      let lookDir = "center";
+      if (hostState === "listening") {
+        lookDir = activeSeatIdx < seatIdx ? "left" : activeSeatIdx > seatIdx ? "right" : "center";
+      }
+
+      el.hostStage.appendChild(renderEmbodiedKurozo(host, hostState, lookDir));
+      el.deskNameplates.appendChild(renderDeskNameplate(host, hostState));
     });
 
-    const stageLabels = {
-      idle: "Ready to play",
-      playing: `${activeHost.name} is speaking`,
-      paused: "Paused",
-      completed: "Episode completed",
-    };
-    el.stageStatusText.textContent = stageLabels[state.playbackState] || "Ready";
-
-    // Captions
+    // Studio-connected caption panel
+    el.captionPanel.style.setProperty("--host-accent", activeHost.accentColor);
     el.captionSpeaker.textContent = `${activeHost.name} (${activeHost.role})`;
     el.captionTurnLabel.textContent = `Turn ${idx + 1} of ${total}`;
     el.captionText.textContent = turn.text;
@@ -673,7 +821,6 @@
           : "Play";
 
     updateVoiceToggleUI();
-    renderContextualVisual(turn.visualCue);
   }
 
   function scheduleTurnAdvance(token) {
@@ -683,7 +830,6 @@
     const turn = ep.segments[state.turnIndex];
     const host = ep.hosts.find((h) => h.id === turn.speakerId) || ep.hosts[0];
 
-    // Trigger brief non-blocking reaction on an inactive host when turn emotion is reacting
     if (turn.emotion === "reacting") {
       const listener = ep.hosts.find((h) => h.id !== turn.speakerId);
       if (listener) {
@@ -832,7 +978,12 @@
     setView("preparing");
 
     el.prepKurozoRow.replaceChildren();
-    ep.hosts.forEach((h) => el.prepKurozoRow.appendChild(createKurozoFigure(h.variant, h.accentColor, true)));
+    ep.hosts.forEach((h) => {
+      const wrap = document.createElement("div");
+      wrap.style.setProperty("--host-accent", h.accentColor);
+      wrap.appendChild(buildKurozoBody(h));
+      el.prepKurozoRow.appendChild(wrap);
+    });
 
     const messages = [
       "Gathering your Kurozos",
@@ -867,7 +1018,7 @@
     if (!ep) return;
     const hostMap = new Map(ep.hosts.map((h) => [h.id, h]));
     const lines = [
-      `Kuro — Interactive Prototype Transcript`,
+      "Kuro — Interactive Prototype Transcript",
       `Title: ${ep.title}`,
       `Topic: ${state.submittedNote || ep.topic}`,
       `Options: ${ep.tone} | ${ep.length} | ${ep.hosts.length} Kurozos`,
@@ -902,7 +1053,7 @@
       const cleanText = btn.textContent.replace(/^✓\s*/, "");
       btn.textContent = active ? `✓ ${cleanText}` : cleanText;
     });
-    renderCreateKurozoPreview();
+    renderCreateStudioPreview();
   }
 
   function updateInputMeta(showErrorIfInvalid) {
@@ -933,6 +1084,12 @@
       const val = btn.dataset.value;
       state[opt] = opt === "hostCount" ? Number(val) : val;
       updateOptionButtons();
+    });
+  });
+
+  document.querySelectorAll("[data-env-choice]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setEnvironment(btn.dataset.envChoice);
     });
   });
 
@@ -1042,6 +1199,7 @@
   }
 
   updateOptionButtons();
+  applyEnvironmentUI();
   updateVoiceToggleUI();
   setView("create");
 })();

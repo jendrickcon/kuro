@@ -1,24 +1,20 @@
-# WP-004.5 Handoff — Standalone Interactive Prototype & Kurozo Mascots
+# WP-004.5 Handoff — Shared Podcast Studio & Embodied Kurozos
 
 ## 1. Status
-**Complete (prototype implementation & verification)** — Built and verified on `prototype/wp-004-5-interactive-demo` with zero modifications to `src/`, `contracts/`, `fixtures/`, or prior WP docs.
+**Complete** — Visual revision completed and verified on `prototype/wp-004-5-interactive-demo` with zero changes to `src/`, `contracts/`, `fixtures/`, or accepted prior WP docs.
 
-## 2. Files Created
-- `prototype/index.html`: Self-contained creation -> preparation -> player UI (`file://` compatible, zero external assets/scripts).
-- `prototype/styles.css`: Responsive (`320px+` to `1280px+`) layout, high-contrast captions, CSS contextual visuals, reduced-motion support, and CSS-only Kurozo mascots.
-- `prototype/app.js`: Classic IIFE with embedded 2-host (`9` turns) and 3-host (`12` turns) sample episodes, `10–2,500` char validation, `runToken`-guarded playback, `window.speechSynthesis` preview + `2.5–8s` silent fallback, and Blob transcript export.
-- `prototype/README.md`: Direct-open instructions, simulation boundaries, `file://`/voice limitations, and Kurozo provisional mascot notice.
-- `docs/wp-004-5/WP-004-5_HANDOFF.md`: Consolidated WP-004.5 summary.
+## 2. Shared Studio & Embodied Kurozo Architecture
+- **Shared studio stage:** Replaced isolated host cards with one unified `#studio-stage` featuring `ON AIR`/`PAUSED`/`STANDBY`/`Episode complete` HUD, environment backdrop/props, curved shared desk, aligned desk nameplates, and integrated studio monitor.
+- **Full CSS Kurozo bodies:** Head, blinking eyes, 3-bar speaking mouth, torso with core accent, left/right arms & hands, seated lower base, and individual desk microphones + active mic LEDs rendered dynamically via `hosts.map(...)`.
+- **Role variants:** `explainer` (blue `#2563EB`, diamond spark), `curious` (amber `#D97706`, dual antennae + curious tilt), `challenger` (violet `#7C3AED`, angular crest + questioning arm angle).
+- **Body states:** `idle` (breathing), `speaking` (halo outline, `"● Speaking"`, active mic LED, talk bob, mouth wave, right-arm gesture), `listening` (faces speaker via `data-look`, gentle nod), `reacting` (brief bounce auto-clearing), `paused` (all motion halted, `"Paused"`), `completed` (all Kurozos `idle`, mic LEDs off, `"Episode complete"`).
+- **Contextual studio monitor:** Renders `comparison`, `timeline`, `process`, `fact-card`, or subtle Kuro waveform + title (`none`) inside the set (side-by-side in 2-host desktop, wall-mounted above center moderator in 3-host desktop, stacked below desk on mobile).
+- **Three prototype environments:** `Studio` (default), `Study Room`, and `Commute Lounge` switch backdrops, props, and monitor labels live mid-playback without resetting or duplicating timers.
+- **CSS camera framing:** `wide` (default/paused), `speaker-focus` (active speaker subtle scale), and `visual-focus` (monitor accent highlight).
 
-## 3. Kurozo Mascot System Summary
-- **Variants:** CSS-only `explainer` (idea-spark crest, `#2563EB`), `curious` (dual uneven antennae + tilt, `#D97706`), and `challenger` (angular dual crest, `#7C3AED`), all rendered dynamically via `hosts.map(...)`.
-- **States:** `idle` (gentle float), `speaking` (ring + `"● Speaking"` badge + wave bars + subtle scale), `reacting` (brief CSS bounce clearing safely), `paused` (animation paused + `"Paused"` badge), and `completed` (all Kurozos return to `idle`).
-- **Layouts & reduced motion:** Two balanced Kurozos and three compact Kurozos fit cleanly at `320px` with zero horizontal overflow; `@media (prefers-reduced-motion: reduce)` removes nonessential movement while preserving borders, rings, and text badges.
-- **Design limitations:** Kurozo is a provisional hackathon mascot concept using abstract CSS shapes only (no final illustration or trademark clearance).
+## 3. Verification & Limitations
+- Verified direct `file://` Chrome execution, `node --check prototype/app.js`, zero external URLs/secrets, and interactive multi-viewport browser tests at `320×640`, `390×844`, `768×800`, and `1280×800` (2-host and 3-host center-elevated mobile staging, live environment switching, all 5 monitor states, speech fallback, transcript download, and reduced-motion rules).
+- **Known limitation:** Environments, camera framing, and Kurozo body animations are prototype-only CSS effects (no 3D, lip sync, procedural scenes, or AI/TTS generation).
 
-## 4. Verification & Known Limitations
-- Verified static syntax (`node --check`), zero external network URLs/secrets, and direct Chrome/headless verification across `320×640`, `390×844`, `768×800`, and `1280×800` (exact evidence recorded in the consolidated session handoff).
-- Browser speech synthesis voices depend on OS/Chrome installation and cannot produce a downloadable audio file.
-
-## 5. Recommended Next Action
-Review and merge `prototype/wp-004-5-interactive-demo` if desired as a design/demo reference, then proceed with Vercel deployment for `WP-004`, `WP-005` UI polish, and `WP-003B` once `GEMINI_API_KEY` is configured.
+## 4. Recommended Next Action
+Review and merge `prototype/wp-004-5-interactive-demo`, deploy `WP-004` via Vercel Dashboard, and complete `WP-003B` once `GEMINI_API_KEY` is configured before `WP-005` / `WP-007`.
