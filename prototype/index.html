@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kuro — Interactive Prototype</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <div class="header-main">
+        <div class="brand-group">
+          <div class="brand-title-row">
+            <h1 class="brand-name">Kuro</h1>
+            <span class="proto-badge">Interactive prototype</span>
+          </div>
+          <p class="brand-tagline">More voices. Clearer ideas.</p>
+        </div>
+        <div id="header-actions" class="header-actions" hidden>
+          <button type="button" id="btn-back-create" class="btn btn-secondary btn-compact">
+            New conversation
+          </button>
+        </div>
+      </div>
+      <p class="proto-notice" role="note">
+        Uses prewritten sample conversations. No AI generation occurs in this prototype.
+      </p>
+    </header>
+
+    <main id="main-content" class="main-content">
+      <!-- VIEW 1: CREATION -->
+      <section id="view-create" class="view-section" aria-labelledby="create-heading">
+        <div class="welcome-card">
+          <div class="welcome-copy">
+            <h2 id="create-heading" class="section-heading">Meet your Kurozos</h2>
+            <p class="section-subtitle">
+              Each host brings a different role and perspective to the conversation.
+            </p>
+          </div>
+          <div
+            id="create-kurozo-preview"
+            class="kurozo-preview-strip"
+            aria-label="Selected Kurozos preview"
+          ></div>
+        </div>
+
+        <form id="create-form" class="card form-card" novalidate>
+          <div class="field-group">
+            <label for="topic-input" class="field-label">Topic or pasted study material</label>
+            <p id="topic-help" class="field-help">
+              Enter 10 to 2,500 characters. Local sample conversations load by your selected options.
+            </p>
+            <textarea
+              id="topic-input"
+              class="topic-textarea"
+              rows="4"
+              placeholder="Paste class notes, a reading excerpt, or a topic you want unpacked..."
+              aria-describedby="topic-help"
+              aria-invalid="false"
+            ></textarea>
+            <div class="input-meta-row">
+              <button type="button" id="btn-use-example" class="btn btn-subtle">
+                Use study example: Opportunity cost
+              </button>
+              <span id="char-counter" class="char-counter" hidden>0 / 2,500</span>
+            </div>
+          </div>
+
+          <div id="form-error" class="alert-error" role="alert" hidden></div>
+
+          <div class="options-grid">
+            <fieldset class="option-fieldset">
+              <legend class="option-legend">Tone</legend>
+              <div class="pill-row">
+                <button type="button" class="pill-btn" data-option="tone" data-value="casual" aria-pressed="true">
+                  ✓ Casual
+                </button>
+                <button type="button" class="pill-btn" data-option="tone" data-value="serious" aria-pressed="false">
+                  Serious
+                </button>
+              </div>
+            </fieldset>
+
+            <fieldset class="option-fieldset">
+              <legend class="option-legend">Length</legend>
+              <div class="pill-row">
+                <button type="button" class="pill-btn" data-option="length" data-value="quick" aria-pressed="true">
+                  ✓ Quick
+                </button>
+                <button type="button" class="pill-btn" data-option="length" data-value="detailed" aria-pressed="false">
+                  Detailed
+                </button>
+              </div>
+            </fieldset>
+
+            <fieldset class="option-fieldset">
+              <legend class="option-legend">Choose 2 or 3 Kurozos</legend>
+              <div class="pill-row">
+                <button type="button" class="pill-btn" data-option="hostCount" data-value="2" aria-pressed="true">
+                  ✓ 2 Kurozos
+                </button>
+                <button type="button" class="pill-btn" data-option="hostCount" data-value="3" aria-pressed="false">
+                  3 Kurozos
+                </button>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="btn-create" class="btn btn-primary">
+              Create conversation
+            </button>
+            <button type="button" id="btn-try-sample" class="btn btn-secondary">
+              Try sample episode
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- VIEW 2: SIMULATED PREPARATION -->
+      <section id="view-preparing" class="view-section" aria-labelledby="prep-heading" hidden>
+        <div class="card prep-card" role="status" aria-live="polite">
+          <div id="prep-kurozo-row" class="prep-kurozo-row" aria-hidden="true"></div>
+          <h2 id="prep-heading" class="prep-title">Gathering your Kurozos</h2>
+          <p id="prep-subtitle" class="prep-subtitle">
+            Loading a local sample conversation for your selected options.
+          </p>
+          <ol class="prep-steps" aria-label="Preparation progress">
+            <li id="prep-step-0" class="prep-step" data-step-state="active">Gathering your Kurozos</li>
+            <li id="prep-step-1" class="prep-step" data-step-state="pending">Assigning each Kurozo a perspective</li>
+            <li id="prep-step-2" class="prep-step" data-step-state="pending">Preparing the sample conversation</li>
+          </ol>
+          <button type="button" id="btn-cancel-prep" class="btn btn-secondary">
+            Cancel
+          </button>
+        </div>
+      </section>
+
+      <!-- VIEW 3: INTERACTIVE EPISODE PLAYER -->
+      <section id="view-player" class="view-section" aria-labelledby="episode-title" hidden>
+        <div class="episode-bar">
+          <div class="episode-meta-block">
+            <div class="episode-badges">
+              <span class="sample-pill">Sample conversation</span>
+              <span id="episode-meta" class="episode-meta">Casual · Quick · 2 Kurozos</span>
+            </div>
+            <h2 id="episode-title" class="episode-title">Episode Title</h2>
+            <p id="episode-topic-note" class="episode-topic-note"></p>
+          </div>
+
+          <div class="sample-switcher" role="group" aria-label="Switch sample Kurozo count">
+            <button type="button" id="btn-switch-2" class="btn btn-subtle btn-compact" aria-pressed="true">
+              2 Kurozos
+            </button>
+            <button type="button" id="btn-switch-3" class="btn btn-subtle btn-compact" aria-pressed="false">
+              3 Kurozos
+            </button>
+          </div>
+        </div>
+
+        <div id="speech-notice" class="notice-banner" role="status" hidden></div>
+
+        <div class="player-layout">
+          <div class="player-main-col">
+            <section class="host-stage" aria-label="Kurozo hosts">
+              <div class="stage-header">
+                <span class="stage-eyebrow">More Kurozos, more perspectives</span>
+                <span id="stage-status-text" class="stage-status-text">Ready</span>
+              </div>
+              <div id="host-grid" class="host-grid"></div>
+            </section>
+
+            <section id="caption-panel" class="caption-panel" aria-label="Synchronized captions">
+              <div class="caption-header">
+                <span id="caption-speaker" class="caption-speaker">Speaker</span>
+                <span id="caption-turn-label" class="caption-turn-label">Turn 1 of 9</span>
+              </div>
+              <p id="caption-text" class="caption-text" aria-live="polite"></p>
+              <p id="caption-prev" class="caption-prev" hidden></p>
+              <div id="completion-banner" class="completion-banner" role="status" aria-live="polite" hidden>
+                <p class="completion-text">
+                  Sample conversation complete. All Kurozos have finished speaking.
+                </p>
+                <button type="button" id="btn-replay-banner" class="btn btn-primary btn-compact">
+                  Replay episode
+                </button>
+              </div>
+            </section>
+
+            <section id="playback-dock" class="playback-dock" aria-label="Playback controls">
+              <div class="progress-row">
+                <div
+                  id="progress-track"
+                  class="progress-track"
+                  role="progressbar"
+                  aria-label="Episode turn progress"
+                  aria-valuemin="1"
+                  aria-valuemax="9"
+                  aria-valuenow="1"
+                >
+                  <div id="progress-fill" class="progress-fill"></div>
+                </div>
+                <span id="progress-label" class="progress-label">1 / 9</span>
+              </div>
+
+              <div class="transport-row">
+                <button type="button" id="btn-prev" class="btn btn-secondary transport-btn" aria-label="Previous turn">
+                  Prev
+                </button>
+                <button type="button" id="btn-play-pause" class="btn btn-primary play-btn">
+                  Play
+                </button>
+                <button type="button" id="btn-next" class="btn btn-secondary transport-btn" aria-label="Next turn">
+                  Next
+                </button>
+                <button type="button" id="btn-restart" class="btn btn-secondary transport-btn">
+                  Restart
+                </button>
+              </div>
+
+              <div class="utility-row">
+                <button
+                  type="button"
+                  id="btn-voice-toggle"
+                  class="btn btn-subtle utility-btn"
+                  aria-pressed="true"
+                >
+                  Browser preview voice: <span id="voice-toggle-state">On</span>
+                </button>
+                <button type="button" id="btn-download-transcript" class="btn btn-subtle utility-btn">
+                  Download transcript
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <aside id="visual-panel" class="visual-panel" aria-label="Contextual visual">
+            <div class="visual-header">
+              <span class="visual-eyebrow">Contextual visual</span>
+              <span id="visual-type-badge" class="visual-type-badge">None</span>
+            </div>
+            <div id="visual-body" class="visual-body"></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
