@@ -16,6 +16,678 @@ body {
   outline-offset: 2px;
 }
 
+/* Studio theme tokens (extensible via data-stage-theme without changing markup) */
+.kuro-studio-stage[data-stage-theme="contemporary"] {
+  --studio-wall-top: #0b1324;
+  --studio-wall-mid: #162447;
+  --studio-wall-bottom: #0f172a;
+  --studio-desk-top: #475569;
+  --studio-desk-bottom: #1e293b;
+  --studio-desk-rim: #94a3b8;
+  background: linear-gradient(
+    180deg,
+    var(--studio-wall-top) 0%,
+    var(--studio-wall-mid) 68%,
+    var(--studio-wall-bottom) 100%
+  );
+}
+
+.kuro-studio-slats {
+  position: absolute;
+  top: 42px;
+  width: 14%;
+  height: 150px;
+  border-radius: 8px;
+  pointer-events: none;
+  opacity: 0.45;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 0px,
+    rgba(255, 255, 255, 0.05) 5px,
+    transparent 5px,
+    transparent 11px
+  );
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.kuro-studio-slats--left {
+  left: 2.5%;
+}
+
+.kuro-studio-slats--right {
+  right: 2.5%;
+}
+
+/* Shared curved podcast desk & nameplate bay */
+.kuro-shared-desk-rim {
+  height: 16px;
+  margin: -6px -2% 0;
+  border-radius: 50% 50% 0 0 / 14px 14px 0 0;
+  background: linear-gradient(180deg, var(--studio-desk-top) 0%, var(--studio-desk-bottom) 100%);
+  border-top: 2.5px solid var(--studio-desk-rim);
+}
+
+.kuro-nameplate-row {
+  background-color: #0b1222;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Embodied geometric Kurozos — larger and closer, zero enclosing halo */
+.kurozo-seat {
+  --kurozo-accent: #2563eb;
+  --kurozo-head-w: 54px;
+  --kurozo-head-h: 44px;
+  --kurozo-torso-wrap-w: 68px;
+  --kurozo-torso-wrap-h: 36px;
+  --kurozo-torso-w: 46px;
+  --kurozo-torso-h: 34px;
+  --kurozo-seat-w: 110px;
+  position: relative;
+  width: var(--kurozo-seat-w);
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 8px;
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+
+.kurozo-seat[data-host-count="3"] {
+  --kurozo-head-w: 46px;
+  --kurozo-head-h: 38px;
+  --kurozo-torso-wrap-w: 58px;
+  --kurozo-torso-wrap-h: 32px;
+  --kurozo-torso-w: 38px;
+  --kurozo-torso-h: 30px;
+  --kurozo-seat-w: 88px;
+}
+
+.kurozo-seat--center-trio {
+  transform: translateY(-8px);
+}
+
+/* Soft studio spotlight on back wall behind active speaker (not an enclosing halo) */
+.kurozo-stage-light {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120%;
+  height: 115%;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 50% 24%,
+    color-mix(in srgb, var(--kurozo-accent) 34%, transparent) 0%,
+    rgba(255, 255, 255, 0.08) 42%,
+    transparent 74%
+  );
+  transition: opacity 200ms ease;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-stage-light {
+  opacity: 1;
+}
+
+.kurozo-seat[data-state="paused"] .kurozo-stage-light {
+  opacity: 0.55;
+}
+
+.kurozo-seat[data-state="listening"] {
+  opacity: 0.9;
+}
+
+.kurozo-body {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: bottom center;
+  animation: kurozo-breathe 3.6s ease-in-out infinite;
+  transition: transform 200ms ease;
+}
+
+/* Forward conversational lean when speaking */
+.kurozo-seat[data-state="speaking"] .kurozo-body {
+  animation: kurozo-talk-lean 540ms ease-in-out infinite alternate;
+}
+
+.kurozo-seat[data-state="listening"] .kurozo-body {
+  animation: kurozo-nod 2.8s ease-in-out infinite;
+}
+
+.kurozo-seat[data-state="reacting"] .kurozo-body {
+  animation: kurozo-react 540ms ease-in-out 1;
+}
+
+.kurozo-seat[data-state="paused"] .kurozo-body,
+.kurozo-seat[data-state="complete"] .kurozo-body {
+  animation: none;
+}
+
+/* Conversational facing offsets */
+.kurozo-seat[data-seat="left"][data-look="right"] .kurozo-eyes,
+.kurozo-seat[data-state="speaking"][data-seat="left"] .kurozo-eyes {
+  transform: translateX(2px);
+}
+
+.kurozo-seat[data-seat="right"][data-look="left"] .kurozo-eyes,
+.kurozo-seat[data-state="speaking"][data-seat="right"] .kurozo-eyes {
+  transform: translateX(-2px);
+}
+
+.kurozo-seat[data-look="left"] .kurozo-head {
+  transform: rotate(-3deg);
+}
+
+.kurozo-seat[data-look="right"] .kurozo-head {
+  transform: rotate(3deg);
+}
+
+/* Geometric role crests */
+.kurozo-crest {
+  position: relative;
+  height: 12px;
+  width: 36px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 7px;
+  margin-bottom: -1px;
+}
+
+.kurozo-crest-a,
+.kurozo-crest-b {
+  display: none;
+  background-color: var(--kurozo-accent);
+  border: 1.5px solid #f8fafc;
+}
+
+.kurozo-seat[data-role="explainer"] .kurozo-crest-a {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+
+.kurozo-seat[data-role="learner"] .kurozo-crest-a,
+.kurozo-seat[data-role="learner"] .kurozo-crest-b {
+  display: block;
+  width: 5px;
+  height: 11px;
+  border-radius: 999px;
+}
+
+.kurozo-seat[data-role="learner"] .kurozo-crest-b {
+  height: 8px;
+}
+
+.kurozo-seat[data-role="skeptic"] .kurozo-crest-a,
+.kurozo-seat[data-role="skeptic"] .kurozo-crest-b {
+  display: block;
+  width: 8px;
+  height: 9px;
+  border-radius: 2px 6px 2px 2px;
+  transform: skewX(-14deg);
+}
+
+.kurozo-seat[data-role="skeptic"] .kurozo-crest-b {
+  border-radius: 6px 2px 2px 2px;
+  transform: skewX(14deg);
+}
+
+.kurozo-seat[data-role="storyteller"] .kurozo-crest-a,
+.kurozo-seat[data-role="storyteller"] .kurozo-crest-b {
+  display: block;
+  width: 14px;
+  height: 6px;
+  border-radius: 999px 999px 0 0;
+}
+
+.kurozo-seat[data-role="storyteller"] .kurozo-crest-b {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.kurozo-seat[data-role="specialist"] .kurozo-crest-a {
+  display: block;
+  width: 16px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.kurozo-seat[data-role="moderator"] .kurozo-crest-a,
+.kurozo-seat[data-role="moderator"] .kurozo-crest-b {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+/* Head, eyes, speech-wave mouth */
+.kurozo-head {
+  position: relative;
+  z-index: 3;
+  width: var(--kurozo-head-w);
+  height: var(--kurozo-head-h);
+  border-radius: 48% 48% 42% 42%;
+  background-color: var(--kurozo-accent);
+  border: 2.5px solid #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+  transition: transform 200ms ease;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-head {
+  border-color: #ffffff;
+  box-shadow: 0 3px 0 rgba(15, 23, 42, 0.35);
+}
+
+.kurozo-head-highlight {
+  position: absolute;
+  top: -6px;
+  left: -4px;
+  width: 65%;
+  height: 55%;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+}
+
+.kurozo-eyes {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  transition: transform 180ms ease;
+}
+
+.kurozo-eye {
+  width: 6px;
+  height: 7px;
+  border-radius: 999px;
+  background-color: #0f172a;
+  animation: kurozo-blink 5.4s ease-in-out infinite;
+}
+
+.kurozo-seat[data-state="paused"] .kurozo-eye,
+.kurozo-seat[data-state="complete"] .kurozo-eye {
+  animation: none;
+}
+
+.kurozo-seat[data-role="skeptic"] .kurozo-eye--left {
+  transform: rotate(12deg);
+}
+
+.kurozo-seat[data-role="skeptic"] .kurozo-eye--right {
+  transform: rotate(-12deg);
+}
+
+.kurozo-mouth {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 11px;
+}
+
+.kurozo-wave-bar {
+  width: 4px;
+  height: 3.5px;
+  border-radius: 999px;
+  background-color: #0f172a;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-wave-bar {
+  animation: kurozo-wave 360ms ease-in-out infinite alternate;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-wave-bar:nth-child(2) {
+  animation-delay: 110ms;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-wave-bar:nth-child(3) {
+  animation-delay: 220ms;
+}
+
+.kurozo-seat[data-state="paused"] .kurozo-wave-bar {
+  height: 5px;
+  animation: none;
+}
+
+/* Sculpted torso, arms, hands, lower silhouette */
+.kurozo-torso-wrap {
+  position: relative;
+  width: var(--kurozo-torso-wrap-w);
+  height: var(--kurozo-torso-wrap-h);
+  margin-top: -4px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.kurozo-torso {
+  position: relative;
+  z-index: 2;
+  width: var(--kurozo-torso-w);
+  height: var(--kurozo-torso-h);
+  border-radius: 18px 18px 8px 8px;
+  background: linear-gradient(180deg, var(--kurozo-accent) 0%, #0f172a 185%);
+  border: 2.5px solid #f8fafc;
+  border-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 5px;
+}
+
+.kurozo-collar {
+  width: 55%;
+  height: 4px;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.55);
+}
+
+.kurozo-badge {
+  margin-top: 5px;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background-color: #f8fafc;
+  opacity: 0.85;
+}
+
+.kurozo-arm {
+  position: absolute;
+  top: 4px;
+  width: 11px;
+  height: 24px;
+  border-radius: 999px;
+  background-color: var(--kurozo-accent);
+  border: 2px solid #f8fafc;
+  transform-origin: top center;
+}
+
+.kurozo-arm--left {
+  left: 1px;
+  transform: rotate(15deg);
+}
+
+.kurozo-arm--right {
+  right: 1px;
+  transform: rotate(-15deg);
+}
+
+.kurozo-hand {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background-color: #f8fafc;
+  border: 1.5px solid #0f172a;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-arm--right {
+  animation: kurozo-gesture-right 640ms ease-in-out infinite alternate;
+}
+
+.kurozo-seat[data-state="reacting"] .kurozo-arm--left {
+  transform: rotate(34deg);
+}
+
+.kurozo-seat[data-state="paused"] .kurozo-arm--right {
+  animation: none;
+  transform: rotate(-28deg);
+}
+
+.kurozo-lower {
+  width: calc(var(--kurozo-torso-w) + 8px);
+  height: 12px;
+  margin-top: -2px;
+  border-radius: 12px 12px 0 0;
+  background-color: #1e293b;
+  border: 2px solid rgba(248, 250, 252, 0.72);
+  border-bottom: 0;
+}
+
+/* Studio microphone paired directly beside each Kurozo */
+.kurozo-mic {
+  position: absolute;
+  bottom: 0;
+  right: 6%;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.kurozo-seat[data-seat="right"] .kurozo-mic {
+  right: auto;
+  left: 6%;
+}
+
+.kurozo-mic-head {
+  width: 13px;
+  height: 18px;
+  border-radius: 7px;
+  background-color: #1e293b;
+  border: 1.5px solid #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kurozo-mic-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background-color: #64748b;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-mic-head {
+  border-color: #86efac;
+}
+
+.kurozo-seat[data-state="speaking"] .kurozo-mic-led {
+  background-color: #4ade80;
+  box-shadow: 0 0 8px #22c55e;
+}
+
+.kurozo-seat[data-state="paused"] .kurozo-mic-led {
+  background-color: #fbbf24;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
+.kurozo-mic-neck {
+  width: 3px;
+  height: 22px;
+  background-color: #94a3b8;
+}
+
+/* Standby monitor geometric waveform */
+.kuro-standby-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.kuro-standby-bar {
+  width: 4px;
+  height: 8px;
+  border-radius: 999px;
+  background-color: #1d4ed8;
+}
+
+.kuro-standby-wave--active .kuro-standby-bar {
+  animation: kurozo-wave 560ms ease-in-out infinite alternate;
+}
+
+.kuro-standby-wave--active .kuro-standby-bar:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.kuro-standby-wave--active .kuro-standby-bar:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.kuro-standby-wave--active .kuro-standby-bar:nth-child(4) {
+  animation-delay: 360ms;
+}
+
+.kuro-standby-wave--active .kuro-standby-bar:nth-child(5) {
+  animation-delay: 180ms;
+}
+
+@media (min-width: 640px) {
+  .kurozo-seat {
+    --kurozo-head-w: 64px;
+    --kurozo-head-h: 52px;
+    --kurozo-torso-wrap-w: 82px;
+    --kurozo-torso-wrap-h: 44px;
+    --kurozo-torso-w: 56px;
+    --kurozo-torso-h: 40px;
+    --kurozo-seat-w: 152px;
+  }
+
+  .kurozo-seat[data-host-count="3"] {
+    --kurozo-head-w: 58px;
+    --kurozo-head-h: 46px;
+    --kurozo-torso-wrap-w: 74px;
+    --kurozo-torso-wrap-h: 40px;
+    --kurozo-torso-w: 50px;
+    --kurozo-torso-h: 36px;
+    --kurozo-seat-w: 132px;
+  }
+
+  .kurozo-arm {
+    width: 13px;
+    height: 29px;
+  }
+
+  .kurozo-eye {
+    width: 7px;
+    height: 8px;
+  }
+}
+
+@media (min-width: 768px) {
+  .kurozo-seat {
+    --kurozo-head-w: 72px;
+    --kurozo-head-h: 58px;
+    --kurozo-torso-wrap-w: 94px;
+    --kurozo-torso-wrap-h: 50px;
+    --kurozo-torso-w: 64px;
+    --kurozo-torso-h: 46px;
+    --kurozo-seat-w: 176px;
+  }
+
+  .kurozo-seat[data-host-count="3"] {
+    --kurozo-head-w: 66px;
+    --kurozo-head-h: 52px;
+    --kurozo-torso-wrap-w: 86px;
+    --kurozo-torso-wrap-h: 46px;
+    --kurozo-torso-w: 58px;
+    --kurozo-torso-h: 42px;
+    --kurozo-seat-w: 154px;
+  }
+
+  .kurozo-mic-neck {
+    height: 28px;
+  }
+}
+
+@keyframes kurozo-breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+@keyframes kurozo-talk-lean {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes kurozo-wave {
+  0% {
+    height: 3.5px;
+  }
+  100% {
+    height: 11px;
+  }
+}
+
+@keyframes kurozo-gesture-right {
+  0% {
+    transform: rotate(-15deg);
+  }
+  100% {
+    transform: rotate(-42deg);
+  }
+}
+
+@keyframes kurozo-blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.15);
+  }
+}
+
+@keyframes kurozo-nod {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+  }
+  90% {
+    transform: translateY(2.5px);
+  }
+}
+
+@keyframes kurozo-react {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  40% {
+    transform: translateY(-6px) rotate(-3deg);
+  }
+  75% {
+    transform: translateY(0) rotate(2deg);
+  }
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -23,5 +695,25 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .kurozo-seat[data-state="speaking"] .kurozo-body,
+  .kurozo-seat[data-state="listening"] .kurozo-body,
+  .kurozo-seat[data-state="reacting"] .kurozo-body,
+  .kurozo-seat .kurozo-body,
+  .kurozo-seat .kurozo-eye,
+  .kurozo-seat .kurozo-wave-bar,
+  .kurozo-seat .kurozo-arm--right,
+  .kuro-standby-wave--active .kuro-standby-bar {
+    animation: none !important;
+  }
+
+  /* Retain clear static posture difference without animation */
+  .kurozo-seat[data-state="speaking"] .kurozo-body {
+    transform: translateY(-3px);
+  }
+
+  .kurozo-seat[data-state="speaking"] .kurozo-wave-bar {
+    height: 7px;
   }
 }

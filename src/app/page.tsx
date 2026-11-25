@@ -2,8 +2,8 @@ import { KuroSkeleton } from "@/components/kuro/kuro-skeleton";
 
 export default function HomePage() {
   return (
-    <main className="mx-auto w-full max-w-2xl px-3 py-5 sm:px-6 sm:py-9">
-      <header className="mb-5">
+    <main className="mx-auto w-full max-w-[840px] px-3 py-4 sm:px-6 sm:py-6">
+      <header className="mb-3.5 sm:mb-4">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl">
             Kuro
