@@ -1,0 +1,48 @@
+{
+  "id": "ep_invalid_visual_cue_001",
+  "title": "Malformed Visual Cue Episode",
+  "topic": "Explain opportunity cost for a college student.",
+  "tone": "casual",
+  "length": "quick",
+  "status": "mock",
+  "hosts": [
+    {
+      "id": "host_maya",
+      "name": "Maya",
+      "role": "explainer",
+      "voiceId": "voice_provisional_explainer_01",
+      "accentColor": "#2563EB",
+      "avatarId": "avatar_explainer_01"
+    },
+    {
+      "id": "host_leo",
+      "name": "Leo",
+      "role": "learner",
+      "voiceId": "voice_provisional_learner_01",
+      "accentColor": "#D97706",
+      "avatarId": "avatar_learner_01"
+    }
+  ],
+  "segments": [
+    { "id": "seg_01", "order": 0, "speakerId": "host_leo", "text": "How do you compare a shift and studying?", "emotion": "curious", "visualCue": { "type": "none" } },
+    { "id": "seg_02", "order": 1, "speakerId": "host_maya", "text": "Look at both cash earned and study time given up.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    {
+      "id": "seg_03",
+      "order": 2,
+      "speakerId": "host_maya",
+      "text": "This turn intentionally carries an invalid legacy visual payload.",
+      "emotion": "explaining",
+      "visualCue": {
+        "type": "comparison",
+        "title": "Legacy Unstructured Cue",
+        "payload": { "left": "Study", "right": "Shift" }
+      }
+    },
+    { "id": "seg_04", "order": 3, "speakerId": "host_leo", "text": "So free activities still have implicit time costs.", "emotion": "reacting", "visualCue": { "type": "none" } },
+    { "id": "seg_05", "order": 4, "speakerId": "host_maya", "text": "Yes, because two hours can only be spent once.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_06", "order": 5, "speakerId": "host_leo", "text": "And only the next-best option counts.", "emotion": "curious", "visualCue": { "type": "none" } },
+    { "id": "seg_07", "order": 6, "speakerId": "host_maya", "text": "Exactly right—keep that rule for exams.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_08", "order": 7, "speakerId": "host_leo", "text": "Makes complete sense now.", "emotion": "neutral", "visualCue": { "type": "none" } }
+  ],
+  "createdAt": "2026-11-26T00:00:00.000Z"
+}

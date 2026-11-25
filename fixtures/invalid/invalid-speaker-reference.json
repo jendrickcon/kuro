@@ -1,0 +1,37 @@
+{
+  "id": "ep_invalid_speaker_ref_001",
+  "title": "Broken Speaker Reference Episode",
+  "topic": "Explain opportunity cost for a college student.",
+  "tone": "casual",
+  "length": "quick",
+  "status": "mock",
+  "hosts": [
+    {
+      "id": "host_maya",
+      "name": "Maya",
+      "role": "explainer",
+      "voiceId": "voice_provisional_explainer_01",
+      "accentColor": "#2563EB",
+      "avatarId": "avatar_explainer_01"
+    },
+    {
+      "id": "host_leo",
+      "name": "Leo",
+      "role": "learner",
+      "voiceId": "voice_provisional_learner_01",
+      "accentColor": "#D97706",
+      "avatarId": "avatar_learner_01"
+    }
+  ],
+  "segments": [
+    { "id": "seg_01", "order": 0, "speakerId": "host_leo", "text": "What does opportunity cost mean in daily student life?", "emotion": "curious", "visualCue": { "type": "none" } },
+    { "id": "seg_02", "order": 1, "speakerId": "host_maya", "text": "It is the value of the best option you give up.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_03", "order": 2, "speakerId": "host_leo", "text": "So picking a shift gives up evening study time.", "emotion": "reacting", "visualCue": { "type": "none" } },
+    { "id": "seg_04", "order": 3, "speakerId": "host_ghost", "text": "This line intentionally references a speaker not in hosts.", "emotion": "neutral", "visualCue": { "type": "none" } },
+    { "id": "seg_05", "order": 4, "speakerId": "host_maya", "text": "Time is scarce even when the library is free.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_06", "order": 5, "speakerId": "host_leo", "text": "And it only counts the single next-best alternative.", "emotion": "curious", "visualCue": { "type": "none" } },
+    { "id": "seg_07", "order": 6, "speakerId": "host_maya", "text": "Yes, not every alternative combined together.", "emotion": "explaining", "visualCue": { "type": "none" } },
+    { "id": "seg_08", "order": 7, "speakerId": "host_leo", "text": "That makes exam questions much clearer.", "emotion": "neutral", "visualCue": { "type": "none" } }
+  ],
+  "createdAt": "2026-11-26T00:00:00.000Z"
+}
