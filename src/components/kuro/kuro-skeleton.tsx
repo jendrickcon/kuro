@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   CreateEpisodeRequestSchema,
   CreateEpisodeResponseSchema,
+  EpisodeSchema,
   INPUT_MAX_CHARS,
   INPUT_MIN_CHARS,
   type Episode,
@@ -12,8 +13,19 @@ import {
 } from "@contracts/episode.schema";
 import { CreationForm } from "@/components/kuro/creation-form";
 import { EpisodePreview } from "@/components/kuro/episode-preview";
+import { RecoverableErrorCard } from "@/components/kuro/form-error";
 import { GenerationStatus } from "@/components/kuro/generation-status";
 import { getSampleEpisode } from "@/lib/episode/fixtures";
+
+interface ResultState {
+  episode: Episode;
+  source: "mock" | "sample";
+  requestedOptions?: {
+    tone: Tone;
+    length: EpisodeLength;
+    hostCount: 2 | 3;
+  };
+}
 
 export function KuroSkeleton() {
   const [input, setInput] = useState("");
@@ -21,21 +33,58 @@ export function KuroSkeleton() {
   const [length, setLength] = useState<EpisodeLength>("quick");
   const [hostCount, setHostCount] = useState<2 | 3>(2);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [episode, setEpisode] = useState<Episode | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<{ message: string; retryable: boolean } | null>(
+    null,
+  );
+  const [result, setResult] = useState<ResultState | null>(null);
+
+  const isSubmittingRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const errorCardRef = useRef<HTMLDivElement | null>(null);
+
+  function focusTextarea() {
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }
+
+  function focusErrorCard() {
+    window.requestAnimationFrame(() => {
+      errorCardRef.current?.focus();
+    });
+  }
+
+  function handleInputChange(nextValue: string) {
+    setInput(nextValue);
+    if (fieldError) setFieldError(null);
+    if (requestError) setRequestError(null);
+  }
 
   async function handleSubmit() {
+    if (isSubmittingRef.current) return;
+
     const trimmed = input.trim();
-    if (trimmed.length < INPUT_MIN_CHARS) {
-      setErrorMessage(
-        `Enter at least ${INPUT_MIN_CHARS} characters or paste a short study passage.`,
+    if (trimmed.length === 0) {
+      setFieldError(
+        `Enter a topic or paste study material (at least ${INPUT_MIN_CHARS} characters).`,
       );
+      setRequestError(null);
+      focusTextarea();
+      return;
+    }
+    if (trimmed.length < INPUT_MIN_CHARS) {
+      setFieldError(`Enter at least ${INPUT_MIN_CHARS} characters so Kuro has enough context.`);
+      setRequestError(null);
+      focusTextarea();
       return;
     }
     if (trimmed.length > INPUT_MAX_CHARS) {
-      setErrorMessage(
-        `Keep your topic or pasted notes under ${INPUT_MAX_CHARS.toLocaleString()} characters.`,
+      setFieldError(
+        `Keep your topic or pasted notes under ${INPUT_MAX_CHARS.toLocaleString()} characters (~400 words).`,
       );
+      setRequestError(null);
+      focusTextarea();
       return;
     }
 
@@ -46,11 +95,15 @@ export function KuroSkeleton() {
       hostCount,
     });
     if (!requestCheck.success) {
-      setErrorMessage("Please check your input and selected options.");
+      setFieldError("Check your topic and selected options before continuing.");
+      setRequestError(null);
+      focusTextarea();
       return;
     }
 
-    setErrorMessage(null);
+    isSubmittingRef.current = true;
+    setFieldError(null);
+    setRequestError(null);
     setIsSubmitting(true);
 
     try {
@@ -59,47 +112,113 @@ export function KuroSkeleton() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestCheck.data),
       });
-      const json: unknown = await response.json();
-      const parsed = CreateEpisodeResponseSchema.safeParse(json);
 
+      let json: unknown;
+      try {
+        json = await response.json();
+      } catch {
+        setRequestError({
+          message: "The server returned an unreadable response. Your text is safe—please try again.",
+          retryable: true,
+        });
+        focusErrorCard();
+        return;
+      }
+
+      const parsed = CreateEpisodeResponseSchema.safeParse(json);
       if (!parsed.success) {
-        setErrorMessage("Unexpected mock response format. Your input was preserved.");
+        setRequestError({
+          message: "Received an unexpected episode response format. Please try again.",
+          retryable: true,
+        });
+        focusErrorCard();
         return;
       }
 
       if (!parsed.data.ok) {
-        setErrorMessage(parsed.data.error.message);
+        if (parsed.data.error.code === "INVALID_INPUT") {
+          setFieldError(parsed.data.error.message);
+          focusTextarea();
+        } else {
+          setRequestError({
+            message: parsed.data.error.message,
+            retryable: parsed.data.error.retryable,
+          });
+          focusErrorCard();
+        }
         return;
       }
 
-      setEpisode(parsed.data.episode);
+      const episodeCheck = EpisodeSchema.safeParse(parsed.data.episode);
+      if (!episodeCheck.success) {
+        setRequestError({
+          message: "The returned mock episode could not be verified. Please try again.",
+          retryable: true,
+        });
+        focusErrorCard();
+        return;
+      }
+
+      setResult({
+        episode: episodeCheck.data,
+        source: "mock",
+        requestedOptions: { tone, length, hostCount },
+      });
     } catch {
-      setErrorMessage("Could not reach the mock episode endpoint. Please try again.");
+      setRequestError({
+        message: "Could not reach the mock episode service. Check your connection and try again.",
+        retryable: true,
+      });
+      focusErrorCard();
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   }
 
   function handleTrySample() {
-    setErrorMessage(null);
-    setEpisode(getSampleEpisode());
+    if (isSubmittingRef.current) return;
+    setFieldError(null);
+    setRequestError(null);
+    const sample = EpisodeSchema.parse(getSampleEpisode());
+    setResult({ episode: sample, source: "sample" });
   }
 
-  if (episode) {
-    return <EpisodePreview episode={episode} onBack={() => setEpisode(null)} />;
+  if (result) {
+    return (
+      <EpisodePreview
+        episode={result.episode}
+        source={result.source}
+        requestedOptions={result.requestedOptions}
+        onBack={() => setResult(null)}
+      />
+    );
   }
 
   return (
     <div className="space-y-4">
       {isSubmitting ? <GenerationStatus /> : null}
+      {requestError && !isSubmitting ? (
+        <RecoverableErrorCard
+          message={requestError.message}
+          retryable={requestError.retryable}
+          containerRef={errorCardRef}
+          onRetry={handleSubmit}
+          onEdit={() => {
+            setRequestError(null);
+            focusTextarea();
+          }}
+        />
+      ) : null}
       <CreationForm
         input={input}
         tone={tone}
         length={length}
         hostCount={hostCount}
         isSubmitting={isSubmitting}
-        errorMessage={errorMessage}
-        onInputChange={setInput}
+        fieldError={fieldError}
+        textareaRef={textareaRef}
+        onInputChange={handleInputChange}
         onToneChange={setTone}
         onLengthChange={setLength}
         onHostCountChange={setHostCount}

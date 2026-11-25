@@ -1,61 +1,19 @@
 "use client";
 
-import type { FormEvent } from "react";
+import type { FormEvent, RefObject } from "react";
 import {
   INPUT_MAX_CHARS,
   INPUT_MIN_CHARS,
   type EpisodeLength,
   type Tone,
 } from "@contracts/episode.schema";
+import { FieldError } from "@/components/kuro/form-error";
+import { KurozoPreview } from "@/components/kuro/kurozo-preview";
+import { OptionSelector } from "@/components/kuro/option-selector";
 
 const STUDY_EXAMPLE =
   "Explain opportunity cost using a college student choosing among studying, commuting, and part-time work.";
-
-interface OptionItem<T extends string | number> {
-  value: T;
-  label: string;
-}
-
-function BinaryOptionGroup<T extends string | number>({
-  legend,
-  options,
-  selected,
-  disabled,
-  onSelect,
-}: {
-  legend: string;
-  options: [OptionItem<T>, OptionItem<T>];
-  selected: T;
-  disabled: boolean;
-  onSelect: (value: T) => void;
-}) {
-  return (
-    <fieldset className="min-w-0">
-      <legend className="mb-1.5 text-sm font-semibold text-slate-900">{legend}</legend>
-      <div className="grid grid-cols-2 gap-2">
-        {options.map((opt) => {
-          const isSelected = selected === opt.value;
-          return (
-            <button
-              key={String(opt.value)}
-              type="button"
-              disabled={disabled}
-              aria-pressed={isSelected}
-              onClick={() => onSelect(opt.value)}
-              className={`min-h-11 rounded-lg border-2 px-3 py-2 text-sm transition-colors disabled:opacity-60 ${
-                isSelected
-                  ? "border-slate-900 bg-slate-900 font-semibold text-white"
-                  : "border-slate-300 bg-white font-medium text-slate-800 hover:border-slate-500"
-              }`}
-            >
-              {isSelected ? `✓ ${opt.label}` : opt.label}
-            </button>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
+const QUIET_WARNING_CHARS = 2250;
 
 export interface CreationFormProps {
   input: string;
@@ -63,7 +21,8 @@ export interface CreationFormProps {
   length: EpisodeLength;
   hostCount: 2 | 3;
   isSubmitting: boolean;
-  errorMessage: string | null;
+  fieldError: string | null;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   onInputChange: (value: string) => void;
   onToneChange: (tone: Tone) => void;
   onLengthChange: (length: EpisodeLength) => void;
@@ -78,7 +37,8 @@ export function CreationForm({
   length,
   hostCount,
   isSubmitting,
-  errorMessage,
+  fieldError,
+  textareaRef,
   onInputChange,
   onToneChange,
   onLengthChange,
@@ -87,7 +47,11 @@ export function CreationForm({
   onTrySample,
 }: CreationFormProps) {
   const trimmedLen = input.trim().length;
-  const showCounter = trimmedLen >= 2000 || Boolean(errorMessage);
+  const isOverLimit = trimmedLen > INPUT_MAX_CHARS;
+  const isApproachingLimit = !isOverLimit && trimmedLen >= QUIET_WARNING_CHARS;
+  const describedBy = fieldError
+    ? "kuro-topic-help kuro-char-count kuro-topic-error"
+    : "kuro-topic-help kuro-char-count";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,110 +59,135 @@ export function CreationForm({
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      noValidate
-      className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs"
-    >
-      <div>
-        <label htmlFor="kuro-topic-input" className="block text-sm font-semibold text-slate-900">
-          Topic or pasted study material
-        </label>
-        <p id="kuro-topic-help" className="mt-1 text-xs text-slate-600">
-          Enter {INPUT_MIN_CHARS} to {INPUT_MAX_CHARS.toLocaleString()} characters.
-        </p>
-        <textarea
-          id="kuro-topic-input"
-          rows={4}
-          value={input}
-          disabled={isSubmitting}
-          onChange={(e) => onInputChange(e.target.value)}
-          placeholder="Paste class notes, a reading excerpt, or a topic to unpack..."
-          aria-invalid={Boolean(errorMessage)}
-          aria-describedby={errorMessage ? "kuro-topic-help kuro-topic-error" : "kuro-topic-help"}
-          className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 placeholder:text-slate-500 disabled:bg-slate-100"
-        />
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
+    <div className="space-y-4">
+      <KurozoPreview hostCount={hostCount} />
+
+      <form
+        onSubmit={handleSubmit}
+        noValidate
+        className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:p-5"
+      >
+        <div>
+          <label htmlFor="kuro-topic-input" className="block text-sm font-bold text-slate-950">
+            Topic or pasted study material
+          </label>
+          <p id="kuro-topic-help" className="mt-1 text-xs text-slate-600">
+            Enter {INPUT_MIN_CHARS} to {INPUT_MAX_CHARS.toLocaleString()} characters — paste class
+            notes, a reading excerpt, or a topic you want explained.
+          </p>
+
+          <textarea
+            ref={textareaRef}
+            id="kuro-topic-input"
+            rows={4}
+            value={input}
             disabled={isSubmitting}
-            onClick={() => onInputChange(STUDY_EXAMPLE)}
-            className="min-h-11 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-left text-xs font-medium text-slate-800 hover:bg-slate-100 disabled:opacity-60"
-          >
-            Use study example: Opportunity cost
-          </button>
-          {showCounter ? (
+            onChange={(e) => onInputChange(e.target.value)}
+            placeholder="Paste lecture notes or enter a study topic..."
+            aria-invalid={Boolean(fieldError)}
+            aria-describedby={describedBy}
+            className={`mt-2 w-full rounded-xl border bg-white px-3 py-2.5 text-base text-slate-950 placeholder:text-slate-500 disabled:bg-slate-100 ${
+              fieldError ? "border-red-500" : "border-slate-300"
+            }`}
+          />
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => onInputChange(STUDY_EXAMPLE)}
+                className="min-h-11 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-60"
+              >
+                Use study example: Opportunity cost
+              </button>
+              {input.length > 0 ? (
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => onInputChange("")}
+                  className="min-h-11 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+
             <span
-              className={`text-xs font-medium ${
-                trimmedLen > INPUT_MAX_CHARS ? "text-red-700" : "text-slate-600"
+              id="kuro-char-count"
+              className={`text-xs font-semibold ${
+                isOverLimit
+                  ? "text-red-700"
+                  : isApproachingLimit
+                    ? "text-amber-800"
+                    : "text-slate-600"
               }`}
             >
               {trimmedLen.toLocaleString()} / {INPUT_MAX_CHARS.toLocaleString()}
+              {isApproachingLimit ? " (approaching limit)" : ""}
             </span>
-          ) : null}
+          </div>
+
+          <FieldError id="kuro-topic-error" message={fieldError} />
         </div>
-      </div>
 
-      {errorMessage ? (
-        <div
-          id="kuro-topic-error"
-          role="alert"
-          className="rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-900"
-        >
-          {errorMessage}
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <OptionSelector
+            legend="Tone"
+            options={[
+              { value: "casual", label: "Casual" },
+              { value: "serious", label: "Serious" },
+            ]}
+            selected={tone}
+            disabled={isSubmitting}
+            onSelect={onToneChange}
+          />
+          <OptionSelector
+            legend="Hosts"
+            options={[
+              { value: 2, label: "2 hosts" },
+              { value: 3, label: "3 hosts" },
+            ]}
+            selected={hostCount}
+            disabled={isSubmitting}
+            onSelect={onHostCountChange}
+          />
+          <div className="sm:col-span-2">
+            <OptionSelector
+              legend="Length"
+              options={[
+                { value: "quick", label: "Quick", hint: "~8–10 turns" },
+                { value: "detailed", label: "Detailed", hint: "~12–15 turns" },
+              ]}
+              selected={length}
+              disabled={isSubmitting}
+              onSelect={onLengthChange}
+            />
+          </div>
         </div>
-      ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <BinaryOptionGroup
-          legend="Tone"
-          options={[
-            { value: "casual", label: "Casual" },
-            { value: "serious", label: "Serious" },
-          ]}
-          selected={tone}
-          disabled={isSubmitting}
-          onSelect={onToneChange}
-        />
-        <BinaryOptionGroup
-          legend="Length"
-          options={[
-            { value: "quick", label: "Quick" },
-            { value: "detailed", label: "Detailed" },
-          ]}
-          selected={length}
-          disabled={isSubmitting}
-          onSelect={onLengthChange}
-        />
-        <BinaryOptionGroup
-          legend="Hosts"
-          options={[
-            { value: 2, label: "2 hosts" },
-            { value: 3, label: "3 hosts" },
-          ]}
-          selected={hostCount}
-          disabled={isSubmitting}
-          onSelect={onHostCountChange}
-        />
-      </div>
+        <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="min-h-12 flex-1 rounded-xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSubmitting ? "Preparing conversation..." : "Create conversation"}
+          </button>
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={onTrySample}
+            className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
+          >
+            Try sample episode
+          </button>
+        </div>
 
-      <div className="flex flex-col gap-2 pt-1 sm:flex-row">
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="min-h-12 flex-1 rounded-lg bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isSubmitting ? "Preparing mock conversation..." : "Create conversation"}
-        </button>
-        <button
-          type="button"
-          disabled={isSubmitting}
-          onClick={onTrySample}
-          className="min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
-        >
-          Try sample episode
-        </button>
-      </div>
-    </form>
+        <p className="text-xs text-slate-600">
+          Current build uses the mock WP-004 episode service and returns validated sample episodes.
+        </p>
+      </form>
+    </div>
   );
 }

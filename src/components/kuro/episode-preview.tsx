@@ -1,31 +1,41 @@
 "use client";
 
 import { useState } from "react";
-import type { Episode } from "@contracts/episode.schema";
+import type { Episode, EpisodeLength, Tone } from "@contracts/episode.schema";
+
+export interface EpisodePreviewProps {
+  episode: Episode;
+  source: "mock" | "sample";
+  requestedOptions?: {
+    tone: Tone;
+    length: EpisodeLength;
+    hostCount: 2 | 3;
+  };
+  onBack: () => void;
+}
 
 export function EpisodePreview({
   episode,
+  source,
+  requestedOptions,
   onBack,
-}: {
-  episode: Episode;
-  onBack: () => void;
-}) {
+}: EpisodePreviewProps) {
   const [segmentIndex, setSegmentIndex] = useState(0);
   const currentSegment = episode.segments[segmentIndex] ?? episode.segments[0];
   const activeHost = episode.hosts.find((h) => h.id === currentSegment?.speakerId);
   const hostGridClass = episode.hosts.length === 3 ? "grid-cols-3" : "grid-cols-2";
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+    <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-200 pb-3">
         <div className="min-w-0">
           <span className="inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
-            Mock episode
+            {source === "sample" ? "Sample episode" : "Mock episode"}
           </span>
           <h2 className="mt-1.5 text-lg font-bold text-slate-950 break-words">{episode.title}</h2>
           <p className="mt-0.5 text-xs text-slate-600">
-            {episode.tone} · {episode.length} · {episode.hosts.length} hosts ·{" "}
-            {episode.segments.length} segments
+            {episode.tone} · {requestedOptions?.length ?? episode.length} · {episode.hosts.length}{" "}
+            hosts · {episode.segments.length} segments
           </p>
         </div>
         <button
@@ -36,6 +46,12 @@ export function EpisodePreview({
           Back to form
         </button>
       </div>
+
+      {source === "sample" ? (
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          Prewritten 2-host sample episode loaded directly — not generated from your form input.
+        </p>
+      ) : null}
 
       <p className="text-xs text-slate-700 break-words">
         <span className="font-semibold text-slate-900">Topic:</span> {episode.topic}
