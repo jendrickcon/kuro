@@ -1,4 +1,5 @@
 import type { HostRole } from "@contracts/episode.schema";
+import type { AllowedDeepgramVoice } from "@/lib/tts/deepgram-tts-client";
 import {
   KUROMATE_PROFILE_IDS,
   ROLE_TO_PROFILE_ID,
@@ -34,6 +35,8 @@ export interface KuromateRoleStyleProfile {
 
 export interface KuromateVoiceProfile extends KuromateRoleStyleProfile {
   readonly voice: AllowedPrebuiltVoice;
+  /** Server-only allowlisted hosted voice for the primary provider; `voice` stays the fallback voice. */
+  readonly deepgramVoice: AllowedDeepgramVoice;
 }
 
 export interface ResolvedKuromateTtsProfile extends KuromateVoiceProfile {
@@ -49,6 +52,7 @@ export const KUROMATE_VOICE_PROFILES: Readonly<Record<HostRole, KuromateVoicePro
     profileId: "kuromate_explainer_v1",
     role: "explainer",
     voice: "Sulafat",
+    deepgramVoice: "aura-2-thalia-en",
     pace: "Measured and steady",
     tone: "Warm, clear, grounded, conversational",
     emphasisGuidance: "Light emphasis on core concepts with brief explanatory pauses; never announcer-like.",
@@ -62,6 +66,7 @@ export const KUROMATE_VOICE_PROFILES: Readonly<Record<HostRole, KuromateVoicePro
     profileId: "kuromate_learner_v1",
     role: "learner",
     voice: "Puck",
+    deepgramVoice: "aura-2-apollo-en",
     pace: "Slightly quicker, responsive",
     tone: "Curious, natural, approachable",
     emphasisGuidance: "Natural upward curiosity on genuine questions without exaggerated cheerfulness.",
@@ -75,6 +80,7 @@ export const KUROMATE_VOICE_PROFILES: Readonly<Record<HostRole, KuromateVoicePro
     profileId: "kuromate_skeptic_v1",
     role: "skeptic",
     voice: "Kore",
+    deepgramVoice: "aura-2-orion-en",
     pace: "Deliberate with short thoughtful pauses",
     tone: "Direct, questioning, composed",
     emphasisGuidance: "Controlled emphasis on tradeoffs and caveats; distinct and probing without hostility.",
@@ -88,6 +94,7 @@ export const KUROMATE_VOICE_PROFILES: Readonly<Record<HostRole, KuromateVoicePro
     profileId: "kuromate_storyteller_v1",
     role: "storyteller",
     voice: "Achird",
+    deepgramVoice: "aura-2-athena-en",
     pace: "Varied, natural storytelling cadence",
     tone: "Warm, relatable, expressive",
     emphasisGuidance: "Gentle dramatic lift on everyday examples and turning points; never theatrical.",
@@ -101,6 +108,7 @@ export const KUROMATE_VOICE_PROFILES: Readonly<Record<HostRole, KuromateVoicePro
     profileId: "kuromate_specialist_v1",
     role: "specialist",
     voice: "Sadaltager",
+    deepgramVoice: "aura-2-arcas-en",
     pace: "Even and articulate",
     tone: "Precise, focused, calm technical confidence",
     emphasisGuidance: "Clear articulation on mechanisms and real-world nuances without jargon-heavy stiffness.",
@@ -114,6 +122,7 @@ export const KUROMATE_VOICE_PROFILES: Readonly<Record<HostRole, KuromateVoicePro
     profileId: "kuromate_moderator_v1",
     role: "moderator",
     voice: "Erinome",
+    deepgramVoice: "aura-2-luna-en",
     pace: "Balanced and organized",
     tone: "Calm, neutral, structured",
     emphasisGuidance: "Clean transitional framing and light recap emphasis.",

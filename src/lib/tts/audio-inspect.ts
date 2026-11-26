@@ -181,9 +181,9 @@ function inspectOggBuffer(buffer: Buffer): InspectedAudioResult {
   };
 }
 
-/** Decodes base64 TTS audio, enforces MIME/byte bounds, and verifies binary container headers. */
-export function decodeAndInspectTtsAudio(
-  base64Data: string,
+/** Enforces MIME/byte bounds and verifies binary container headers on already-decoded TTS audio bytes. */
+export function inspectTtsAudioBuffer(
+  bytes: Buffer,
   declaredMimeType: string | undefined,
   maxBytes: number = TTS_MAX_AUDIO_BYTES,
 ): { bytes: Buffer; metadata: InspectedAudioResult } {
@@ -194,8 +194,13 @@ export function decodeAndInspectTtsAudio(
       "Voice provider returned an unexpected audio format.",
     );
   }
+  if (bytes.length === 0) {
+    throw new AudioInspectionError("empty_audio", "Decoded audio payload was empty.");
+  }
+  if (bytes.length > maxBytes) {
+    throw new AudioInspectionError("oversized_audio", "Decoded audio segment exceeded maximum allowed byte size.");
+  }
 
-  const bytes = decodeBase64Bounded(base64Data, maxBytes);
   const metadata =
     normalizedMime === "audio/wav"
       ? inspectWavBuffer(bytes)
@@ -204,4 +209,21 @@ export function decodeAndInspectTtsAudio(
         : inspectOggBuffer(bytes);
 
   return { bytes, metadata };
+}
+
+/** Decodes base64 TTS audio, enforces MIME/byte bounds, and verifies binary container headers. */
+export function decodeAndInspectTtsAudio(
+  base64Data: string,
+  declaredMimeType: string | undefined,
+  maxBytes: number = TTS_MAX_AUDIO_BYTES,
+): { bytes: Buffer; metadata: InspectedAudioResult } {
+  // Check MIME before decoding so an unexpected format is reported ahead of any base64 problem.
+  if (!normalizeDeclaredAudioMime(declaredMimeType)) {
+    throw new AudioInspectionError(
+      "unexpected_mime",
+      "Voice provider returned an unexpected audio format.",
+    );
+  }
+
+  return inspectTtsAudioBuffer(decodeBase64Bounded(base64Data, maxBytes), declaredMimeType, maxBytes);
 }

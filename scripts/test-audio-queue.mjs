@@ -1144,15 +1144,17 @@ function createHarness(episode = makeTestEpisode(8), opts = {}) {
   }
   walkSrc(path.join(root, "src"));
   const forbiddenPattern =
-    /\b(?:deepgram|azure|cognitiveservices|kokoro(?:-js)?|onnxruntime|phonemizer|espeak(?:-ng)?)\b|@huggingface\/transformers/i;
+    /\b(?:azure|cognitiveservices|kokoro(?:-js)?|onnxruntime|phonemizer|espeak(?:-ng)?)\b|@huggingface\/transformers/i;
   const pkgBad = forbiddenPattern.test(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const srcBad = srcFiles.filter((f) => {
     const txt = fs.readFileSync(f, "utf8");
     return forbiddenPattern.test(txt) || /sessionstorage\.setitem/i.test(txt);
   });
+  const clientFiles = srcFiles.filter((f) => /[\\/](?:components|hooks)[\\/]/i.test(f));
+  const clientDeepgramRefs = clientFiles.filter((f) => /deepgram|deepgram-tts-client/i.test(fs.readFileSync(f, "utf8")));
   check(
-    !pkgBad && srcBad.length === 0,
-    "[WP-011.5 Queue 13,14,15] Zero Deepgram/Azure/Kokoro/persistent-storage code or dependencies exist",
+    !pkgBad && srcBad.length === 0 && clientDeepgramRefs.length === 0,
+    "[WP-011.5 Queue 13,14,15] Deepgram stays server-only; Azure/Kokoro/persistent storage remain excluded",
   );
 }
 

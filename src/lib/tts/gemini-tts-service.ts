@@ -1,8 +1,14 @@
 import {
   AudioInspectionError,
   decodeAndInspectTtsAudio,
+  inspectTtsAudioBuffer,
   type InspectedAudioResult,
 } from "@/lib/tts/audio-inspect";
+import {
+  createDeepgramTtsTransport,
+  DEEPGRAM_TTS_TIMEOUT_MS,
+  type DeepgramTtsTransport,
+} from "@/lib/tts/deepgram-tts-client";
 import {
   ALLOWED_GEMINI_TTS_FALLBACK_MODELS,
   ALLOWED_GEMINI_TTS_MODELS,
@@ -47,7 +53,12 @@ export const MAX_TTS_REGENERATION_ATTEMPTS = 1;
  */
 export const MAX_TTS_PROVIDER_ATTEMPTS = 3;
 
+/** Server-selected hosted TTS provider (never chosen by the browser). */
+export type TtsProvider = "deepgram" | "gemini";
+
 export interface GenerateSegmentTtsMeta {
+  /** Active provider for sanitized server telemetry only. */
+  provider?: TtsProvider;
   segmentId: string;
   speakerId: string;
   profileId: string;
@@ -95,6 +106,8 @@ export interface GenerateSegmentTtsOptions {
   maxAudioBytes?: number;
   signal?: AbortSignal;
   transport?: GeminiTtsTransport;
+  /** Injectable primary transport for tests; production builds the native-fetch client from `DEEPGRAM_API_KEY`. */
+  deepgramTransport?: DeepgramTtsTransport;
 }
 
 export function isAllowedGeminiTtsModel(value: string): value is AllowedGeminiTtsModel {
@@ -138,6 +151,27 @@ export function resolveGeminiTtsFallbackModel(
     return { configured: false, invalidModel: raw };
   }
   return { configured: true, model: raw };
+}
+
+/**
+ * Resolves the server-side primary provider. `KURO_TTS_PROVIDER` is an allowlist (`deepgram` | `gemini`);
+ * when unset, Deepgram is the default only if its key exists and no Gemini transport override was injected.
+ */
+export function resolveTtsProvider(
+  env: Record<string, string | undefined> = process.env,
+  hasGeminiTransportOverride: boolean = false,
+): { configured: true; provider: TtsProvider } | { configured: false } {
+  const raw = env.KURO_TTS_PROVIDER?.trim().toLowerCase();
+  if (raw) {
+    return raw === "deepgram" || raw === "gemini"
+      ? { configured: true, provider: raw }
+      : { configured: false };
+  }
+  const deepgramKeyPresent = Boolean(env.DEEPGRAM_API_KEY?.trim());
+  return {
+    configured: true,
+    provider: !hasGeminiTransportOverride && deepgramKeyPresent ? "deepgram" : "gemini",
+  };
 }
 
 function buildFailureResult(
@@ -284,6 +318,8 @@ export async function generateSegmentTts(
     role: request.role,
   });
 
+  let metaProvider: TtsProvider | undefined;
+
   const makeMeta = (
     providerAttempts: number,
     resolvedModel: string,
@@ -306,6 +342,7 @@ export async function generateSegmentTts(
     sdkRetryDisabled: true,
     quotaClass,
     hostedState,
+    ...(metaProvider ? { provider: metaProvider } : {}),
     ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     latencyMs: Date.now() - startedAt,
   });
@@ -333,9 +370,22 @@ export async function generateSegmentTts(
   const distinctFallbackModel =
     fallbackConfig.model && fallbackConfig.model !== requestedModel ? fallbackConfig.model : null;
 
+  const providerSelection = resolveTtsProvider(env, options.transport !== undefined);
+  if (!providerSelection.configured) {
+    return buildFailureResult(
+      503,
+      "TTS_NOT_CONFIGURED",
+      "Configured Kuromate voice provider is not supported on this server. Captions remain active.",
+      false,
+      makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
+    );
+  }
+  const useDeepgram = providerSelection.provider === "deepgram";
+  metaProvider = providerSelection.provider;
+
   const apiKey =
     options.apiKey !== undefined ? options.apiKey.trim() : (env.GEMINI_API_KEY?.trim() ?? "");
-  if (!apiKey) {
+  if (!apiKey && !useDeepgram) {
     return buildFailureResult(
       503,
       "TTS_NOT_CONFIGURED",
@@ -343,6 +393,32 @@ export async function generateSegmentTts(
       false,
       makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
     );
+  }
+
+  let deepgramTransport: DeepgramTtsTransport | null = null;
+  if (useDeepgram) {
+    const deepgramApiKey = env.DEEPGRAM_API_KEY?.trim() ?? "";
+    if (!deepgramApiKey) {
+      return buildFailureResult(
+        503,
+        "TTS_NOT_CONFIGURED",
+        "Hosted Kuromate voice preview is not configured on this server. Captions remain active.",
+        false,
+        makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
+      );
+    }
+    try {
+      deepgramTransport = options.deepgramTransport ?? createDeepgramTtsTransport(deepgramApiKey);
+    } catch (err) {
+      const providerErr = classifyGeminiTtsError(err);
+      return mapProviderFailure(
+        providerErr,
+        makeMeta(0, requestedModel, false, 0, providerErr.quotaClass, "hosted_unavailable"),
+        providerErr.quotaClass,
+        "hosted_unavailable",
+        providerErr.retryAfterSeconds,
+      );
+    }
   }
 
   if (options.signal?.aborted) {
@@ -355,32 +431,136 @@ export async function generateSegmentTts(
     );
   }
 
-  let transport: GeminiTtsTransport;
+  let transport: GeminiTtsTransport | null = null;
   try {
-    transport = options.transport ?? createGeminiTtsTransport(apiKey);
+    transport = options.transport ?? (apiKey ? createGeminiTtsTransport(apiKey) : null);
   } catch (err) {
-    const providerErr = classifyGeminiTtsError(err);
-    const errState: HostedTtsHealthState =
-      providerErr.quotaClass === "long_quota_wait"
-        ? "all_hosted_daily_exhausted"
-        : "hosted_unavailable";
-    return mapProviderFailure(
-      providerErr,
-      makeMeta(0, requestedModel, false, 0, providerErr.quotaClass, errState),
-      providerErr.quotaClass,
-      errState,
-      providerErr.retryAfterSeconds,
-    );
+    if (!useDeepgram) {
+      const providerErr = classifyGeminiTtsError(err);
+      const errState: HostedTtsHealthState =
+        providerErr.quotaClass === "long_quota_wait"
+          ? "all_hosted_daily_exhausted"
+          : "hosted_unavailable";
+      return mapProviderFailure(
+        providerErr,
+        makeMeta(0, requestedModel, false, 0, providerErr.quotaClass, errState),
+        providerErr.quotaClass,
+        errState,
+        providerErr.retryAfterSeconds,
+      );
+    }
+    // Deepgram is primary: an unusable Gemini transport only disables the fallback.
+    transport = null;
   }
+  const geminiTransport: GeminiTtsTransport =
+    transport ??
+    (async () => {
+      throw new GeminiTtsError(
+        "missing_key",
+        "Hosted Kuromate voice preview is not configured on this server. Captions remain active.",
+        false,
+      );
+    });
 
-  const routedDirectlyToFallback = routePreference === "fallback" && distinctFallbackModel !== null;
-  let activeModel: string = routedDirectlyToFallback ? distinctFallbackModel : requestedModel;
+  // Deepgram primary falls back only to the allowlisted Gemini Flash-Lite model, and only when Gemini is usable.
+  const fallbackTargetModel: string | null = useDeepgram
+    ? transport !== null
+      ? fallbackConfig.model
+      : null
+    : distinctFallbackModel;
+  const routedDirectlyToFallback = routePreference === "fallback" && fallbackTargetModel !== null;
+  let activeModel: string = routedDirectlyToFallback ? fallbackTargetModel : requestedModel;
   let fallbackUsed = routedDirectlyToFallback;
+  if (useDeepgram && routedDirectlyToFallback) {
+    metaProvider = "gemini";
+  }
   let modelSwitches = 0;
   let providerAttempts = 0;
   let regenerations = 0;
   let primaryQuotaClass: TtsQuotaClass = "none";
   let primaryRetryAfterSeconds: number | undefined;
+
+  // Deepgram primary: exactly one attempt, then at most one switch to Gemini Flash-Lite on capacity errors.
+  if (useDeepgram && deepgramTransport && !routedDirectlyToFallback) {
+    providerAttempts = 1;
+    const deepgramLabel = profile.deepgramVoice;
+    try {
+      const rawAudio = await deepgramTransport({
+        voice: profile.deepgramVoice,
+        text: request.text,
+        timeoutMs: options.timeoutMs ?? DEEPGRAM_TTS_TIMEOUT_MS,
+        signal: options.signal,
+      });
+
+      let inspected: { bytes: Buffer; metadata: InspectedAudioResult };
+      try {
+        inspected = inspectTtsAudioBuffer(rawAudio.bytes, rawAudio.mimeType, maxAudioBytes);
+      } catch (inspectErr) {
+        if (inspectErr instanceof AudioInspectionError) {
+          return mapProviderFailure(
+            mapInspectionError(inspectErr).error,
+            makeMeta(1, deepgramLabel, false, 0, "none", "hosted_unavailable"),
+            "none",
+            "hosted_unavailable",
+          );
+        }
+        throw inspectErr;
+      }
+
+      return {
+        ok: true,
+        httpStatus: 200,
+        audioBytes: inspected.bytes,
+        audio: inspected.metadata,
+        profile,
+        meta: {
+          ...makeMeta(1, deepgramLabel, false, 0, "none", "primary_available"),
+          byteLength: inspected.metadata.byteLength,
+          durationMs: inspected.metadata.durationMs,
+          container: inspected.metadata.container,
+        },
+      };
+    } catch (err) {
+      const providerErr = classifyGeminiTtsError(err, Boolean(options.signal?.aborted));
+      if (
+        fallbackTargetModel !== null &&
+        modelSwitches < MAX_TTS_MODEL_SWITCHES &&
+        isTtsCapacityFallbackEligible(providerErr) &&
+        !options.signal?.aborted
+      ) {
+        if (providerErr.quotaClass !== "none") {
+          primaryQuotaClass = providerErr.quotaClass;
+        }
+        if (providerErr.retryAfterSeconds !== undefined) {
+          primaryRetryAfterSeconds = providerErr.retryAfterSeconds;
+        }
+        modelSwitches += 1;
+        fallbackUsed = true;
+        activeModel = fallbackTargetModel;
+        metaProvider = "gemini";
+      } else {
+        const failedState: HostedTtsHealthState =
+          providerErr.quotaClass === "long_quota_wait"
+            ? "all_hosted_daily_exhausted"
+            : "hosted_unavailable";
+        return mapProviderFailure(
+          providerErr,
+          makeMeta(
+            1,
+            deepgramLabel,
+            false,
+            0,
+            providerErr.quotaClass,
+            failedState,
+            providerErr.retryAfterSeconds,
+          ),
+          providerErr.quotaClass,
+          failedState,
+          providerErr.retryAfterSeconds,
+        );
+      }
+    }
+  }
 
   while (providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS) {
     providerAttempts += 1;
@@ -389,7 +569,7 @@ export async function generateSegmentTts(
       activeModel === requestedModel ? profile.voice : profile.fallbackVoice;
 
     try {
-      const rawAudio = await transport({
+      const rawAudio = await geminiTransport({
         model: activeModel,
         text: request.text,
         voice: voiceForAttempt,
@@ -473,7 +653,7 @@ export async function generateSegmentTts(
       if (
         !routedDirectlyToFallback &&
         activeModel === requestedModel &&
-        distinctFallbackModel !== null &&
+        fallbackTargetModel !== null &&
         modelSwitches < MAX_TTS_MODEL_SWITCHES &&
         isTtsCapacityFallbackEligible(providerErr) &&
         providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS &&
@@ -487,7 +667,7 @@ export async function generateSegmentTts(
         }
         modelSwitches += 1;
         fallbackUsed = true;
-        activeModel = distinctFallbackModel;
+        activeModel = fallbackTargetModel;
         continue;
       }
 

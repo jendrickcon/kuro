@@ -95,6 +95,7 @@ const {
   resolveKuromateSynthesisProfile,
   resolveKuromateVoiceProfile,
 } = await import("../src/lib/tts/voice-profiles.ts");
+const { buildPcm16MonoWav } = await import("../src/lib/tts/deepgram-tts-client.ts");
 
 let passed = 0;
 function check(condition, label) {
@@ -166,6 +167,85 @@ function makeJsonRequest(payload, headers = {}) {
 }
 
 const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJunkChunk: true });
+
+// WP-011.5 Deepgram provider coverage: allowlisted primary, bounded Gemini fallback, and config failures.
+{
+  const req = GenerateTtsRequestSchema.parse({
+    segmentId: "seg_dg_01",
+    speakerId: "host_1",
+    role: "explainer",
+    text: "Deepgram returns a short sample.",
+  });
+  const pcm = Buffer.alloc(24_000 * 2);
+  const env = {
+    KURO_TTS_PROVIDER: "deepgram",
+    DEEPGRAM_API_KEY: "test-deepgram-key",
+    GEMINI_API_KEY: "test-gemini-key",
+    GEMINI_TTS_FALLBACK_MODEL: LITE_GEMINI_TTS_MODEL,
+  };
+  const primaryResponse = await handleTtsPost(makeJsonRequest(req), {
+    env,
+    deepgramTransport: async (call) => {
+      check(call.voice === "aura-2-thalia-en", "Deepgram primary uses the allowlisted explainer voice");
+      return { bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" };
+    },
+  });
+  const primaryBytes = Buffer.from(await primaryResponse.arrayBuffer());
+  check(
+    primaryResponse.status === 200 &&
+      primaryResponse.headers.get("content-type") === "audio/wav" &&
+      primaryBytes.toString("ascii", 0, 4) === "RIFF" &&
+      primaryBytes.readUInt32LE(24) === 24_000 &&
+      primaryBytes.readUInt16LE(22) === 1 &&
+      primaryBytes.readUInt16LE(34) === 16 &&
+      primaryResponse.headers.get("x-kuro-audio-duration-ms") === "1000" &&
+      primaryResponse.headers.get("x-kuro-tts-fallback-used") === "false",
+    "Deepgram primary returns a valid 24 kHz mono PCM WAV with measured duration",
+  );
+
+  for (const status of [429, 503]) {
+    let deepgramCalls = 0;
+    let geminiCalls = 0;
+    const switched = await handleTtsPost(makeJsonRequest(req), {
+      env,
+      deepgramTransport: async () => {
+        deepgramCalls += 1;
+        throw { status, headers: new Headers(status === 429 ? { "Retry-After": "30" } : {}) };
+      },
+      transport: async (call) => {
+        geminiCalls += 1;
+        check(call.model === LITE_GEMINI_TTS_MODEL, `Deepgram ${status} fallback selects Gemini Flash-Lite`);
+        return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+      },
+    });
+    check(
+      switched.status === 200 && deepgramCalls === 1 && geminiCalls === 1 &&
+        switched.headers.get("x-kuro-tts-fallback-used") === "true" &&
+        switched.headers.get("x-kuro-provider-attempts") === "2",
+      `Deepgram ${status} performs one bounded switch to Gemini`,
+    );
+  }
+
+  let authFallbackCalls = 0;
+  const auth = await handleTtsPost(makeJsonRequest(req), {
+    env,
+    deepgramTransport: async () => { throw { status: 401 }; },
+    transport: async () => { authFallbackCalls += 1; return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" }; },
+  });
+  check(auth.status === 502 && authFallbackCalls === 0, "Deepgram auth errors never switch providers");
+
+  const missingKey = await handleTtsPost(makeJsonRequest(req), {
+    env: { KURO_TTS_PROVIDER: "deepgram", GEMINI_API_KEY: "test-gemini-key" },
+    deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" }),
+  });
+  check(missingKey.status === 503 && (await missingKey.json()).error.code === "TTS_NOT_CONFIGURED", "Deepgram selection requires its server key");
+
+  const invalidProvider = await handleTtsPost(makeJsonRequest(req), {
+    env: { KURO_TTS_PROVIDER: "unknown", DEEPGRAM_API_KEY: "test-key" },
+    deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" }),
+  });
+  check(invalidProvider.status === 503 && (await invalidProvider.json()).error.code === "TTS_NOT_CONFIGURED", "Unknown TTS provider fails closed");
+}
 
 // 1-3. Valid role requests (explainer, learner, third role) and unique role mapping
 {
