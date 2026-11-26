@@ -3,7 +3,7 @@
 ## Primary Lane & Tooling
 - **Owner:** Team Member **Lucky**
 - **Primary AI Workflow:** Claude Code (`Opus` research -> `Sonnet` UI implementation -> `Fable` copy/polish), adaptable to any compatible coding agent.
-- **Owns:** UI/UX research, wireframes, typography & spacing systems, information hierarchy, visual direction, responsive layouts (`320px+`), accessibility, Kurozo mascot direction, frontend polish, and hackathon screenshots/demo assets.
+- **Owns:** UI/UX research, wireframes, typography & spacing systems, information hierarchy, visual direction, responsive layouts (`320px+`), accessibility, Kuromate mascot direction, frontend polish, and hackathon screenshots/demo assets.
 - **Boundary:** Must not rewrite backend contracts, app architecture, or alter `SPEC.md` scope/exclusions without Project Owner approval.
 
 ## Research-Before-Implementation Workflow

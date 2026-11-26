@@ -1,7 +1,7 @@
 import { getFixtureByHostCount } from "@/lib/episode/fixtures";
 
 /** Lightweight shared-desk vignette rendered dynamically from fixture hosts[]. */
-export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
+export function KuromatePreview({ hostCount }: { hostCount: 2 | 3 }) {
   const { hosts } = getFixtureByHostCount(hostCount);
   const summaryText = hosts.map((host) => `${host.name} (${host.role})`).join(" · ");
 
@@ -12,7 +12,7 @@ export function KurozoPreview({ hostCount }: { hostCount: 2 | 3 }) {
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-bold text-white">Meet your Kurozos</h2>
+          <h2 className="text-sm font-bold text-white">Meet your Kuromates</h2>
           <p className="text-xs text-slate-300">
             Different perspectives around one shared study desk.
           </p>

@@ -72,18 +72,18 @@ body {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-/* Embodied geometric Kurozos — larger and closer, zero enclosing halo */
-.kurozo-seat {
-  --kurozo-accent: #2563eb;
-  --kurozo-head-w: 54px;
-  --kurozo-head-h: 44px;
-  --kurozo-torso-wrap-w: 68px;
-  --kurozo-torso-wrap-h: 36px;
-  --kurozo-torso-w: 46px;
-  --kurozo-torso-h: 34px;
-  --kurozo-seat-w: 110px;
+/* Embodied geometric Kuromates — larger and closer, zero enclosing halo */
+.kuromate-seat {
+  --kuromate-accent: #2563eb;
+  --kuromate-head-w: 54px;
+  --kuromate-head-h: 44px;
+  --kuromate-torso-wrap-w: 68px;
+  --kuromate-torso-wrap-h: 36px;
+  --kuromate-torso-w: 46px;
+  --kuromate-torso-h: 34px;
+  --kuromate-seat-w: 110px;
   position: relative;
-  width: var(--kurozo-seat-w);
+  width: var(--kuromate-seat-w);
   flex: 0 1 auto;
   display: flex;
   flex-direction: column;
@@ -93,22 +93,22 @@ body {
   transition: transform 200ms ease, opacity 200ms ease;
 }
 
-.kurozo-seat[data-host-count="3"] {
-  --kurozo-head-w: 46px;
-  --kurozo-head-h: 38px;
-  --kurozo-torso-wrap-w: 58px;
-  --kurozo-torso-wrap-h: 32px;
-  --kurozo-torso-w: 38px;
-  --kurozo-torso-h: 30px;
-  --kurozo-seat-w: 88px;
+.kuromate-seat[data-host-count="3"] {
+  --kuromate-head-w: 46px;
+  --kuromate-head-h: 38px;
+  --kuromate-torso-wrap-w: 58px;
+  --kuromate-torso-wrap-h: 32px;
+  --kuromate-torso-w: 38px;
+  --kuromate-torso-h: 30px;
+  --kuromate-seat-w: 88px;
 }
 
-.kurozo-seat--center-trio {
+.kuromate-seat--center-trio {
   transform: translateY(-8px);
 }
 
 /* Soft studio spotlight on back wall behind active speaker (not an enclosing halo) */
-.kurozo-stage-light {
+.kuromate-stage-light {
   position: absolute;
   top: -12px;
   left: 50%;
@@ -119,75 +119,75 @@ body {
   opacity: 0;
   background: radial-gradient(
     ellipse at 50% 24%,
-    color-mix(in srgb, var(--kurozo-accent) 34%, transparent) 0%,
+    color-mix(in srgb, var(--kuromate-accent) 34%, transparent) 0%,
     rgba(255, 255, 255, 0.08) 42%,
     transparent 74%
   );
   transition: opacity 200ms ease;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-stage-light {
+.kuromate-seat[data-state="speaking"] .kuromate-stage-light {
   opacity: 1;
 }
 
-.kurozo-seat[data-state="paused"] .kurozo-stage-light {
+.kuromate-seat[data-state="paused"] .kuromate-stage-light {
   opacity: 0.55;
 }
 
-.kurozo-seat[data-state="listening"] {
+.kuromate-seat[data-state="listening"] {
   opacity: 0.9;
 }
 
-.kurozo-body {
+.kuromate-body {
   position: relative;
   z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   transform-origin: bottom center;
-  animation: kurozo-breathe 3.6s ease-in-out infinite;
+  animation: kuromate-breathe 3.6s ease-in-out infinite;
   transition: transform 200ms ease;
 }
 
 /* Forward conversational lean when speaking */
-.kurozo-seat[data-state="speaking"] .kurozo-body {
-  animation: kurozo-talk-lean 540ms ease-in-out infinite alternate;
+.kuromate-seat[data-state="speaking"] .kuromate-body {
+  animation: kuromate-talk-lean 540ms ease-in-out infinite alternate;
 }
 
-.kurozo-seat[data-state="listening"] .kurozo-body {
-  animation: kurozo-nod 2.8s ease-in-out infinite;
+.kuromate-seat[data-state="listening"] .kuromate-body {
+  animation: kuromate-nod 2.8s ease-in-out infinite;
 }
 
-.kurozo-seat[data-state="reacting"] .kurozo-body {
-  animation: kurozo-react 540ms ease-in-out 1;
+.kuromate-seat[data-state="reacting"] .kuromate-body {
+  animation: kuromate-react 540ms ease-in-out 1;
 }
 
-.kurozo-seat[data-state="paused"] .kurozo-body,
-.kurozo-seat[data-state="complete"] .kurozo-body {
+.kuromate-seat[data-state="paused"] .kuromate-body,
+.kuromate-seat[data-state="complete"] .kuromate-body {
   animation: none;
 }
 
 /* Conversational facing offsets */
-.kurozo-seat[data-seat="left"][data-look="right"] .kurozo-eyes,
-.kurozo-seat[data-state="speaking"][data-seat="left"] .kurozo-eyes {
+.kuromate-seat[data-seat="left"][data-look="right"] .kuromate-eyes,
+.kuromate-seat[data-state="speaking"][data-seat="left"] .kuromate-eyes {
   transform: translateX(2px);
 }
 
-.kurozo-seat[data-seat="right"][data-look="left"] .kurozo-eyes,
-.kurozo-seat[data-state="speaking"][data-seat="right"] .kurozo-eyes {
+.kuromate-seat[data-seat="right"][data-look="left"] .kuromate-eyes,
+.kuromate-seat[data-state="speaking"][data-seat="right"] .kuromate-eyes {
   transform: translateX(-2px);
 }
 
-.kurozo-seat[data-look="left"] .kurozo-head {
+.kuromate-seat[data-look="left"] .kuromate-head {
   transform: rotate(-3deg);
 }
 
-.kurozo-seat[data-look="right"] .kurozo-head {
+.kuromate-seat[data-look="right"] .kuromate-head {
   transform: rotate(3deg);
 }
 
 /* Geometric role crests */
-.kurozo-crest {
+.kuromate-crest {
   position: relative;
   height: 12px;
   width: 36px;
@@ -198,14 +198,14 @@ body {
   margin-bottom: -1px;
 }
 
-.kurozo-crest-a,
-.kurozo-crest-b {
+.kuromate-crest-a,
+.kuromate-crest-b {
   display: none;
-  background-color: var(--kurozo-accent);
+  background-color: var(--kuromate-accent);
   border: 1.5px solid #f8fafc;
 }
 
-.kurozo-seat[data-role="explainer"] .kurozo-crest-a {
+.kuromate-seat[data-role="explainer"] .kuromate-crest-a {
   display: block;
   width: 10px;
   height: 10px;
@@ -213,20 +213,20 @@ body {
   transform: rotate(45deg);
 }
 
-.kurozo-seat[data-role="learner"] .kurozo-crest-a,
-.kurozo-seat[data-role="learner"] .kurozo-crest-b {
+.kuromate-seat[data-role="learner"] .kuromate-crest-a,
+.kuromate-seat[data-role="learner"] .kuromate-crest-b {
   display: block;
   width: 5px;
   height: 11px;
   border-radius: 999px;
 }
 
-.kurozo-seat[data-role="learner"] .kurozo-crest-b {
+.kuromate-seat[data-role="learner"] .kuromate-crest-b {
   height: 8px;
 }
 
-.kurozo-seat[data-role="skeptic"] .kurozo-crest-a,
-.kurozo-seat[data-role="skeptic"] .kurozo-crest-b {
+.kuromate-seat[data-role="skeptic"] .kuromate-crest-a,
+.kuromate-seat[data-role="skeptic"] .kuromate-crest-b {
   display: block;
   width: 8px;
   height: 9px;
@@ -234,34 +234,34 @@ body {
   transform: skewX(-14deg);
 }
 
-.kurozo-seat[data-role="skeptic"] .kurozo-crest-b {
+.kuromate-seat[data-role="skeptic"] .kuromate-crest-b {
   border-radius: 6px 2px 2px 2px;
   transform: skewX(14deg);
 }
 
-.kurozo-seat[data-role="storyteller"] .kurozo-crest-a,
-.kurozo-seat[data-role="storyteller"] .kurozo-crest-b {
+.kuromate-seat[data-role="storyteller"] .kuromate-crest-a,
+.kuromate-seat[data-role="storyteller"] .kuromate-crest-b {
   display: block;
   width: 14px;
   height: 6px;
   border-radius: 999px 999px 0 0;
 }
 
-.kurozo-seat[data-role="storyteller"] .kurozo-crest-b {
+.kuromate-seat[data-role="storyteller"] .kuromate-crest-b {
   width: 7px;
   height: 7px;
   border-radius: 999px;
 }
 
-.kurozo-seat[data-role="specialist"] .kurozo-crest-a {
+.kuromate-seat[data-role="specialist"] .kuromate-crest-a {
   display: block;
   width: 16px;
   height: 8px;
   border-radius: 4px;
 }
 
-.kurozo-seat[data-role="moderator"] .kurozo-crest-a,
-.kurozo-seat[data-role="moderator"] .kurozo-crest-b {
+.kuromate-seat[data-role="moderator"] .kuromate-crest-a,
+.kuromate-seat[data-role="moderator"] .kuromate-crest-b {
   display: block;
   width: 8px;
   height: 8px;
@@ -269,13 +269,13 @@ body {
 }
 
 /* Head, eyes, speech-wave mouth */
-.kurozo-head {
+.kuromate-head {
   position: relative;
   z-index: 3;
-  width: var(--kurozo-head-w);
-  height: var(--kurozo-head-h);
+  width: var(--kuromate-head-w);
+  height: var(--kuromate-head-h);
   border-radius: 48% 48% 42% 42%;
-  background-color: var(--kurozo-accent);
+  background-color: var(--kuromate-accent);
   border: 2.5px solid #f8fafc;
   display: flex;
   flex-direction: column;
@@ -286,12 +286,12 @@ body {
   transition: transform 200ms ease;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-head {
+.kuromate-seat[data-state="speaking"] .kuromate-head {
   border-color: #ffffff;
   box-shadow: 0 3px 0 rgba(15, 23, 42, 0.35);
 }
 
-.kurozo-head-highlight {
+.kuromate-head-highlight {
   position: absolute;
   top: -6px;
   left: -4px;
@@ -302,7 +302,7 @@ body {
   pointer-events: none;
 }
 
-.kurozo-eyes {
+.kuromate-eyes {
   position: relative;
   z-index: 2;
   display: flex;
@@ -312,28 +312,28 @@ body {
   transition: transform 180ms ease;
 }
 
-.kurozo-eye {
+.kuromate-eye {
   width: 6px;
   height: 7px;
   border-radius: 999px;
   background-color: #0f172a;
-  animation: kurozo-blink 5.4s ease-in-out infinite;
+  animation: kuromate-blink 5.4s ease-in-out infinite;
 }
 
-.kurozo-seat[data-state="paused"] .kurozo-eye,
-.kurozo-seat[data-state="complete"] .kurozo-eye {
+.kuromate-seat[data-state="paused"] .kuromate-eye,
+.kuromate-seat[data-state="complete"] .kuromate-eye {
   animation: none;
 }
 
-.kurozo-seat[data-role="skeptic"] .kurozo-eye--left {
+.kuromate-seat[data-role="skeptic"] .kuromate-eye--left {
   transform: rotate(12deg);
 }
 
-.kurozo-seat[data-role="skeptic"] .kurozo-eye--right {
+.kuromate-seat[data-role="skeptic"] .kuromate-eye--right {
   transform: rotate(-12deg);
 }
 
-.kurozo-mouth {
+.kuromate-mouth {
   position: relative;
   z-index: 2;
   display: flex;
@@ -343,48 +343,48 @@ body {
   height: 11px;
 }
 
-.kurozo-wave-bar {
+.kuromate-wave-bar {
   width: 4px;
   height: 3.5px;
   border-radius: 999px;
   background-color: #0f172a;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-wave-bar {
-  animation: kurozo-wave 360ms ease-in-out infinite alternate;
+.kuromate-seat[data-state="speaking"] .kuromate-wave-bar {
+  animation: kuromate-wave 360ms ease-in-out infinite alternate;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-wave-bar:nth-child(2) {
+.kuromate-seat[data-state="speaking"] .kuromate-wave-bar:nth-child(2) {
   animation-delay: 110ms;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-wave-bar:nth-child(3) {
+.kuromate-seat[data-state="speaking"] .kuromate-wave-bar:nth-child(3) {
   animation-delay: 220ms;
 }
 
-.kurozo-seat[data-state="paused"] .kurozo-wave-bar {
+.kuromate-seat[data-state="paused"] .kuromate-wave-bar {
   height: 5px;
   animation: none;
 }
 
 /* Sculpted torso, arms, hands, lower silhouette */
-.kurozo-torso-wrap {
+.kuromate-torso-wrap {
   position: relative;
-  width: var(--kurozo-torso-wrap-w);
-  height: var(--kurozo-torso-wrap-h);
+  width: var(--kuromate-torso-wrap-w);
+  height: var(--kuromate-torso-wrap-h);
   margin-top: -4px;
   display: flex;
   align-items: flex-start;
   justify-content: center;
 }
 
-.kurozo-torso {
+.kuromate-torso {
   position: relative;
   z-index: 2;
-  width: var(--kurozo-torso-w);
-  height: var(--kurozo-torso-h);
+  width: var(--kuromate-torso-w);
+  height: var(--kuromate-torso-h);
   border-radius: 18px 18px 8px 8px;
-  background: linear-gradient(180deg, var(--kurozo-accent) 0%, #0f172a 185%);
+  background: linear-gradient(180deg, var(--kuromate-accent) 0%, #0f172a 185%);
   border: 2.5px solid #f8fafc;
   border-bottom: 0;
   display: flex;
@@ -393,14 +393,14 @@ body {
   padding-top: 5px;
 }
 
-.kurozo-collar {
+.kuromate-collar {
   width: 55%;
   height: 4px;
   border-radius: 999px;
   background-color: rgba(255, 255, 255, 0.55);
 }
 
-.kurozo-badge {
+.kuromate-badge {
   margin-top: 5px;
   width: 11px;
   height: 11px;
@@ -409,28 +409,28 @@ body {
   opacity: 0.85;
 }
 
-.kurozo-arm {
+.kuromate-arm {
   position: absolute;
   top: 4px;
   width: 11px;
   height: 24px;
   border-radius: 999px;
-  background-color: var(--kurozo-accent);
+  background-color: var(--kuromate-accent);
   border: 2px solid #f8fafc;
   transform-origin: top center;
 }
 
-.kurozo-arm--left {
+.kuromate-arm--left {
   left: 1px;
   transform: rotate(15deg);
 }
 
-.kurozo-arm--right {
+.kuromate-arm--right {
   right: 1px;
   transform: rotate(-15deg);
 }
 
-.kurozo-hand {
+.kuromate-hand {
   position: absolute;
   bottom: -4px;
   left: 50%;
@@ -442,21 +442,21 @@ body {
   border: 1.5px solid #0f172a;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-arm--right {
-  animation: kurozo-gesture-right 640ms ease-in-out infinite alternate;
+.kuromate-seat[data-state="speaking"] .kuromate-arm--right {
+  animation: kuromate-gesture-right 640ms ease-in-out infinite alternate;
 }
 
-.kurozo-seat[data-state="reacting"] .kurozo-arm--left {
+.kuromate-seat[data-state="reacting"] .kuromate-arm--left {
   transform: rotate(34deg);
 }
 
-.kurozo-seat[data-state="paused"] .kurozo-arm--right {
+.kuromate-seat[data-state="paused"] .kuromate-arm--right {
   animation: none;
   transform: rotate(-28deg);
 }
 
-.kurozo-lower {
-  width: calc(var(--kurozo-torso-w) + 8px);
+.kuromate-lower {
+  width: calc(var(--kuromate-torso-w) + 8px);
   height: 12px;
   margin-top: -2px;
   border-radius: 12px 12px 0 0;
@@ -465,8 +465,8 @@ body {
   border-bottom: 0;
 }
 
-/* Studio microphone paired directly beside each Kurozo */
-.kurozo-mic {
+/* Studio microphone paired directly beside each Kuromate */
+.kuromate-mic {
   position: absolute;
   bottom: 0;
   right: 6%;
@@ -477,12 +477,12 @@ body {
   pointer-events: none;
 }
 
-.kurozo-seat[data-seat="right"] .kurozo-mic {
+.kuromate-seat[data-seat="right"] .kuromate-mic {
   right: auto;
   left: 6%;
 }
 
-.kurozo-mic-head {
+.kuromate-mic-head {
   width: 13px;
   height: 18px;
   border-radius: 7px;
@@ -493,28 +493,28 @@ body {
   justify-content: center;
 }
 
-.kurozo-mic-led {
+.kuromate-mic-led {
   width: 6px;
   height: 6px;
   border-radius: 999px;
   background-color: #64748b;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-mic-head {
+.kuromate-seat[data-state="speaking"] .kuromate-mic-head {
   border-color: #86efac;
 }
 
-.kurozo-seat[data-state="speaking"] .kurozo-mic-led {
+.kuromate-seat[data-state="speaking"] .kuromate-mic-led {
   background-color: #4ade80;
   box-shadow: 0 0 8px #22c55e;
 }
 
-.kurozo-seat[data-state="paused"] .kurozo-mic-led {
+.kuromate-seat[data-state="paused"] .kuromate-mic-led {
   background-color: #fbbf24;
   box-shadow: 0 0 6px #f59e0b;
 }
 
-.kurozo-mic-neck {
+.kuromate-mic-neck {
   width: 3px;
   height: 22px;
   background-color: #94a3b8;
@@ -537,7 +537,7 @@ body {
 }
 
 .kuro-standby-wave--active .kuro-standby-bar {
-  animation: kurozo-wave 560ms ease-in-out infinite alternate;
+  animation: kuromate-wave 560ms ease-in-out infinite alternate;
 }
 
 .kuro-standby-wave--active .kuro-standby-bar:nth-child(2) {
@@ -557,64 +557,64 @@ body {
 }
 
 @media (min-width: 640px) {
-  .kurozo-seat {
-    --kurozo-head-w: 64px;
-    --kurozo-head-h: 52px;
-    --kurozo-torso-wrap-w: 82px;
-    --kurozo-torso-wrap-h: 44px;
-    --kurozo-torso-w: 56px;
-    --kurozo-torso-h: 40px;
-    --kurozo-seat-w: 152px;
+  .kuromate-seat {
+    --kuromate-head-w: 64px;
+    --kuromate-head-h: 52px;
+    --kuromate-torso-wrap-w: 82px;
+    --kuromate-torso-wrap-h: 44px;
+    --kuromate-torso-w: 56px;
+    --kuromate-torso-h: 40px;
+    --kuromate-seat-w: 152px;
   }
 
-  .kurozo-seat[data-host-count="3"] {
-    --kurozo-head-w: 58px;
-    --kurozo-head-h: 46px;
-    --kurozo-torso-wrap-w: 74px;
-    --kurozo-torso-wrap-h: 40px;
-    --kurozo-torso-w: 50px;
-    --kurozo-torso-h: 36px;
-    --kurozo-seat-w: 132px;
+  .kuromate-seat[data-host-count="3"] {
+    --kuromate-head-w: 58px;
+    --kuromate-head-h: 46px;
+    --kuromate-torso-wrap-w: 74px;
+    --kuromate-torso-wrap-h: 40px;
+    --kuromate-torso-w: 50px;
+    --kuromate-torso-h: 36px;
+    --kuromate-seat-w: 132px;
   }
 
-  .kurozo-arm {
+  .kuromate-arm {
     width: 13px;
     height: 29px;
   }
 
-  .kurozo-eye {
+  .kuromate-eye {
     width: 7px;
     height: 8px;
   }
 }
 
 @media (min-width: 768px) {
-  .kurozo-seat {
-    --kurozo-head-w: 72px;
-    --kurozo-head-h: 58px;
-    --kurozo-torso-wrap-w: 94px;
-    --kurozo-torso-wrap-h: 50px;
-    --kurozo-torso-w: 64px;
-    --kurozo-torso-h: 46px;
-    --kurozo-seat-w: 176px;
+  .kuromate-seat {
+    --kuromate-head-w: 72px;
+    --kuromate-head-h: 58px;
+    --kuromate-torso-wrap-w: 94px;
+    --kuromate-torso-wrap-h: 50px;
+    --kuromate-torso-w: 64px;
+    --kuromate-torso-h: 46px;
+    --kuromate-seat-w: 176px;
   }
 
-  .kurozo-seat[data-host-count="3"] {
-    --kurozo-head-w: 66px;
-    --kurozo-head-h: 52px;
-    --kurozo-torso-wrap-w: 86px;
-    --kurozo-torso-wrap-h: 46px;
-    --kurozo-torso-w: 58px;
-    --kurozo-torso-h: 42px;
-    --kurozo-seat-w: 154px;
+  .kuromate-seat[data-host-count="3"] {
+    --kuromate-head-w: 66px;
+    --kuromate-head-h: 52px;
+    --kuromate-torso-wrap-w: 86px;
+    --kuromate-torso-wrap-h: 46px;
+    --kuromate-torso-w: 58px;
+    --kuromate-torso-h: 42px;
+    --kuromate-seat-w: 154px;
   }
 
-  .kurozo-mic-neck {
+  .kuromate-mic-neck {
     height: 28px;
   }
 }
 
-@keyframes kurozo-breathe {
+@keyframes kuromate-breathe {
   0%,
   100% {
     transform: translateY(0);
@@ -624,7 +624,7 @@ body {
   }
 }
 
-@keyframes kurozo-talk-lean {
+@keyframes kuromate-talk-lean {
   0% {
     transform: translateY(0);
   }
@@ -633,7 +633,7 @@ body {
   }
 }
 
-@keyframes kurozo-wave {
+@keyframes kuromate-wave {
   0% {
     height: 3.5px;
   }
@@ -642,7 +642,7 @@ body {
   }
 }
 
-@keyframes kurozo-gesture-right {
+@keyframes kuromate-gesture-right {
   0% {
     transform: rotate(-15deg);
   }
@@ -651,7 +651,7 @@ body {
   }
 }
 
-@keyframes kurozo-blink {
+@keyframes kuromate-blink {
   0%,
   94%,
   100% {
@@ -662,7 +662,7 @@ body {
   }
 }
 
-@keyframes kurozo-nod {
+@keyframes kuromate-nod {
   0%,
   80%,
   100% {
@@ -673,7 +673,7 @@ body {
   }
 }
 
-@keyframes kurozo-react {
+@keyframes kuromate-react {
   0% {
     transform: translateY(0) rotate(0deg);
   }
@@ -697,23 +697,23 @@ body {
     transition-duration: 0.01ms !important;
   }
 
-  .kurozo-seat[data-state="speaking"] .kurozo-body,
-  .kurozo-seat[data-state="listening"] .kurozo-body,
-  .kurozo-seat[data-state="reacting"] .kurozo-body,
-  .kurozo-seat .kurozo-body,
-  .kurozo-seat .kurozo-eye,
-  .kurozo-seat .kurozo-wave-bar,
-  .kurozo-seat .kurozo-arm--right,
+  .kuromate-seat[data-state="speaking"] .kuromate-body,
+  .kuromate-seat[data-state="listening"] .kuromate-body,
+  .kuromate-seat[data-state="reacting"] .kuromate-body,
+  .kuromate-seat .kuromate-body,
+  .kuromate-seat .kuromate-eye,
+  .kuromate-seat .kuromate-wave-bar,
+  .kuromate-seat .kuromate-arm--right,
   .kuro-standby-wave--active .kuro-standby-bar {
     animation: none !important;
   }
 
   /* Retain clear static posture difference without animation */
-  .kurozo-seat[data-state="speaking"] .kurozo-body {
+  .kuromate-seat[data-state="speaking"] .kuromate-body {
     transform: translateY(-3px);
   }
 
-  .kurozo-seat[data-state="speaking"] .kurozo-wave-bar {
+  .kuromate-seat[data-state="speaking"] .kuromate-wave-bar {
     height: 7px;
   }
 }

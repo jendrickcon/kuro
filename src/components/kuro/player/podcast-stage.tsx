@@ -2,14 +2,14 @@ import type { CSSProperties } from "react";
 import type { DialogueSegment, Episode } from "@contracts/episode.schema";
 import type { PlaybackStatus } from "@/hooks/use-episode-playback";
 import { ContextualMonitor } from "@/components/kuro/player/contextual-monitor";
-import { KurozoHost, type KurozoHostState } from "@/components/kuro/player/kurozo-host";
+import { KuromateHost, type KuromateHostState } from "@/components/kuro/player/kuromate-host";
 import {
   DEFAULT_STAGE_THEME,
   STAGE_THEME_META,
   type StageTheme,
 } from "@/components/kuro/player/stage-theme";
 
-const HOST_STATE_LABELS: Record<KurozoHostState, string> = {
+const HOST_STATE_LABELS: Record<KuromateHostState, string> = {
   speaking: "● Speaking",
   listening: "Listening",
   reacting: "Reacting",
@@ -68,7 +68,7 @@ export function PodcastStage({
   const paddedTurn = String(currentSegmentIndex + 1).padStart(2, "0");
   const paddedTotal = String(episode.segments.length).padStart(2, "0");
 
-  function resolveHostState(hostId: string): KurozoHostState {
+  function resolveHostState(hostId: string): KuromateHostState {
     if (status === "complete") return "complete";
     if (status === "playing") {
       if (hostId === currentSegment.speakerId) return "speaking";
@@ -87,7 +87,7 @@ export function PodcastStage({
     return "right";
   }
 
-  function resolveLookDirection(hostState: KurozoHostState, seatIdx: number): "left" | "right" | "center" {
+  function resolveLookDirection(hostState: KuromateHostState, seatIdx: number): "left" | "right" | "center" {
     if (hostState === "listening") {
       if (activeSeatIndex < seatIdx) return "left";
       if (activeSeatIndex > seatIdx) return "right";
@@ -141,7 +141,7 @@ export function PodcastStage({
         {episode.hosts.map((host, seatIdx) => {
           const hostState = resolveHostState(host.id);
           return (
-            <KurozoHost
+            <KuromateHost
               key={host.id}
               host={host}
               state={hostState}
@@ -166,7 +166,7 @@ export function PodcastStage({
             const isSpeaking = hostState === "speaking";
             const isPausedSpeaker = hostState === "paused";
             const statusText = HOST_STATE_LABELS[hostState];
-            const accentStyle = { "--kurozo-accent": host.accentColor } as CSSProperties;
+            const accentStyle = { "--kuromate-accent": host.accentColor } as CSSProperties;
 
             return (
               <div

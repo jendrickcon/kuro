@@ -185,7 +185,7 @@ body {
   background-color: #38bdf8;
 }
 
-.mini-kurozo-row {
+.mini-kuromate-row {
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -400,7 +400,7 @@ body {
   gap: 12px;
 }
 
-.prep-kurozo-row {
+.prep-kuromate-row {
   display: flex;
   justify-content: center;
   gap: 16px;
@@ -730,7 +730,7 @@ body {
   z-index: 3;
 }
 
-/* 3 hosts: place middle Kurozo slightly elevated as center/moderator */
+/* 3 hosts: place middle Kuromate slightly elevated as center/moderator */
 .studio-hosts--3 .host-seat:nth-child(2) {
   transform: translateY(-10px);
 }
@@ -765,8 +765,8 @@ body {
   box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35), 0 12px 24px rgba(2, 6, 23, 0.55);
 }
 
-/* FULL-BODY CSS KUROZO RIG */
-.kurozo-rig {
+/* FULL-BODY CSS KUROMATE RIG */
+.kuromate-rig {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -776,16 +776,16 @@ body {
   transition: box-shadow 180ms ease, transform 180ms ease;
 }
 
-.host-seat[data-state="speaking"] .kurozo-rig {
+.host-seat[data-state="speaking"] .kuromate-rig {
   box-shadow: 0 0 0 2px #ffffff, 0 0 0 5px var(--host-accent);
   background-color: rgba(255, 255, 255, 0.06);
 }
 
-.host-seat[data-state="paused"] .kurozo-rig {
+.host-seat[data-state="paused"] .kuromate-rig {
   box-shadow: 0 0 0 2px #f8fafc, 0 0 0 4px var(--host-accent);
 }
 
-.kurozo-crest {
+.kuromate-crest {
   position: relative;
   width: 34px;
   height: 11px;
@@ -795,7 +795,7 @@ body {
   gap: 8px;
 }
 
-.kurozo--explainer .kurozo-crest::before {
+.kuromate--explainer .kuromate-crest::before {
   content: "";
   width: 9px;
   height: 9px;
@@ -805,8 +805,8 @@ body {
   transform: rotate(45deg);
 }
 
-.kurozo--curious .kurozo-crest::before,
-.kurozo--curious .kurozo-crest::after {
+.kuromate--curious .kuromate-crest::before,
+.kuromate--curious .kuromate-crest::after {
   content: "";
   width: 5px;
   height: 10px;
@@ -815,12 +815,12 @@ body {
   border-radius: 999px;
 }
 
-.kurozo--curious .kurozo-crest::after {
+.kuromate--curious .kuromate-crest::after {
   height: 7px;
 }
 
-.kurozo--challenger .kurozo-crest::before,
-.kurozo--challenger .kurozo-crest::after {
+.kuromate--challenger .kuromate-crest::before,
+.kuromate--challenger .kuromate-crest::after {
   content: "";
   width: 7px;
   height: 8px;
@@ -830,20 +830,20 @@ body {
   transform: skewX(-12deg);
 }
 
-.kurozo--challenger .kurozo-crest::after {
+.kuromate--challenger .kuromate-crest::after {
   border-radius: 5px 2px 2px 2px;
   transform: skewX(12deg);
 }
 
-.kurozo-upper {
+.kuromate-upper {
   display: flex;
   flex-direction: column;
   align-items: center;
   transform-origin: bottom center;
-  animation: kurozo-breathe 3.4s ease-in-out infinite;
+  animation: kuromate-breathe 3.4s ease-in-out infinite;
 }
 
-.kurozo-head {
+.kuromate-head {
   position: relative;
   width: 44px;
   height: 36px;
@@ -859,34 +859,34 @@ body {
   z-index: 2;
 }
 
-.kurozo--curious .kurozo-head {
+.kuromate--curious .kuromate-head {
   transform: rotate(-3deg);
 }
 
-.kurozo-eyes {
+.kuromate-eyes {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
 }
 
-.kurozo-eye {
+.kuromate-eye {
   width: 5px;
   height: 6px;
   border-radius: 999px;
   background-color: #0f172a;
-  animation: kurozo-blink 5.5s ease-in-out infinite;
+  animation: kuromate-blink 5.5s ease-in-out infinite;
 }
 
-.kurozo--challenger .kurozo-eye:first-child {
+.kuromate--challenger .kuromate-eye:first-child {
   transform: rotate(12deg);
 }
 
-.kurozo--challenger .kurozo-eye:last-child {
+.kuromate--challenger .kuromate-eye:last-child {
   transform: rotate(-12deg);
 }
 
-.kurozo-mouth {
+.kuromate-mouth {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -894,7 +894,7 @@ body {
   height: 8px;
 }
 
-.kurozo-wave-bar {
+.kuromate-wave-bar {
   width: 3px;
   height: 3px;
   border-radius: 999px;
@@ -902,7 +902,7 @@ body {
 }
 
 /* Torso, arms, hands, and seated lower body */
-.kurozo-torso-wrap {
+.kuromate-torso-wrap {
   position: relative;
   width: 52px;
   height: 28px;
@@ -912,7 +912,7 @@ body {
   justify-content: center;
 }
 
-.kurozo-torso {
+.kuromate-torso {
   width: 34px;
   height: 27px;
   border-radius: 14px 14px 8px 8px;
@@ -923,7 +923,7 @@ body {
   z-index: 1;
 }
 
-.kurozo-core-badge {
+.kuromate-core-badge {
   position: absolute;
   top: 7px;
   left: 50%;
@@ -934,7 +934,7 @@ body {
   background-color: rgba(255, 255, 255, 0.72);
 }
 
-.kurozo-arm {
+.kuromate-arm {
   position: absolute;
   top: 3px;
   width: 9px;
@@ -945,17 +945,17 @@ body {
   transform-origin: top center;
 }
 
-.kurozo-arm--left {
+.kuromate-arm--left {
   left: 2px;
   transform: rotate(16deg);
 }
 
-.kurozo-arm--right {
+.kuromate-arm--right {
   right: 2px;
   transform: rotate(-16deg);
 }
 
-.kurozo-hand {
+.kuromate-hand {
   position: absolute;
   bottom: -3px;
   left: 50%;
@@ -967,15 +967,15 @@ body {
   border: 1.5px solid #0f172a;
 }
 
-.kurozo--challenger .kurozo-arm--left {
+.kuromate--challenger .kuromate-arm--left {
   transform: rotate(-18deg);
 }
 
-.kurozo--challenger .kurozo-arm--right {
+.kuromate--challenger .kuromate-arm--right {
   transform: rotate(18deg);
 }
 
-.kurozo-lower {
+.kuromate-lower {
   width: 40px;
   height: 12px;
   margin-top: -2px;
@@ -986,50 +986,50 @@ body {
 }
 
 /* Body animation states */
-.host-seat[data-state="speaking"] .kurozo-upper {
-  animation: kurozo-talk-bob 520ms ease-in-out infinite alternate;
+.host-seat[data-state="speaking"] .kuromate-upper {
+  animation: kuromate-talk-bob 520ms ease-in-out infinite alternate;
 }
 
-.host-seat[data-state="speaking"] .kurozo-wave-bar {
-  animation: kurozo-speak 380ms ease-in-out infinite alternate;
+.host-seat[data-state="speaking"] .kuromate-wave-bar {
+  animation: kuromate-speak 380ms ease-in-out infinite alternate;
 }
 
-.host-seat[data-state="speaking"] .kurozo-wave-bar:nth-child(2) {
+.host-seat[data-state="speaking"] .kuromate-wave-bar:nth-child(2) {
   animation-delay: 120ms;
 }
 
-.host-seat[data-state="speaking"] .kurozo-wave-bar:nth-child(3) {
+.host-seat[data-state="speaking"] .kuromate-wave-bar:nth-child(3) {
   animation-delay: 240ms;
 }
 
-.host-seat[data-state="speaking"] .kurozo-arm--right {
-  animation: kurozo-gesture 680ms ease-in-out infinite alternate;
+.host-seat[data-state="speaking"] .kuromate-arm--right {
+  animation: kuromate-gesture 680ms ease-in-out infinite alternate;
 }
 
-.host-seat[data-state="listening"][data-look="left"] .kurozo-head {
+.host-seat[data-state="listening"][data-look="left"] .kuromate-head {
   transform: translateX(-2px) rotate(-5deg);
 }
 
-.host-seat[data-state="listening"][data-look="right"] .kurozo-head {
+.host-seat[data-state="listening"][data-look="right"] .kuromate-head {
   transform: translateX(2px) rotate(5deg);
 }
 
-.host-seat[data-state="listening"] .kurozo-upper {
-  animation: kurozo-nod 2.8s ease-in-out infinite;
+.host-seat[data-state="listening"] .kuromate-upper {
+  animation: kuromate-nod 2.8s ease-in-out infinite;
 }
 
-.host-seat[data-state="reacting"] .kurozo-upper {
-  animation: kurozo-react 480ms ease;
+.host-seat[data-state="reacting"] .kuromate-upper {
+  animation: kuromate-react 480ms ease;
 }
 
-.host-seat[data-state="paused"] .kurozo-upper,
-.host-seat[data-state="paused"] .kurozo-eye,
-.host-seat[data-state="paused"] .kurozo-wave-bar,
-.host-seat[data-state="paused"] .kurozo-arm--right {
+.host-seat[data-state="paused"] .kuromate-upper,
+.host-seat[data-state="paused"] .kuromate-eye,
+.host-seat[data-state="paused"] .kuromate-wave-bar,
+.host-seat[data-state="paused"] .kuromate-arm--right {
   animation: none !important;
 }
 
-/* Studio Microphone & Activity Light (kept beside Kurozo so face & name remain clear) */
+/* Studio Microphone & Activity Light (kept beside Kuromate so face & name remain clear) */
 .studio-mic {
   position: absolute;
   right: 6%;
@@ -1411,7 +1411,7 @@ body {
 }
 
 .studio-stage[data-playback="playing"] .monitor-wave-bar {
-  animation: kurozo-speak 560ms ease-in-out infinite alternate;
+  animation: kuromate-speak 560ms ease-in-out infinite alternate;
 }
 
 .studio-stage[data-playback="playing"] .monitor-wave-bar:nth-child(2) {
@@ -1569,7 +1569,7 @@ body {
 }
 
 /* KEYFRAMES */
-@keyframes kurozo-breathe {
+@keyframes kuromate-breathe {
   0%,
   100% {
     transform: translateY(0);
@@ -1579,7 +1579,7 @@ body {
   }
 }
 
-@keyframes kurozo-talk-bob {
+@keyframes kuromate-talk-bob {
   0% {
     transform: translateY(0) scale(1);
   }
@@ -1588,7 +1588,7 @@ body {
   }
 }
 
-@keyframes kurozo-nod {
+@keyframes kuromate-nod {
   0%,
   80%,
   100% {
@@ -1599,7 +1599,7 @@ body {
   }
 }
 
-@keyframes kurozo-speak {
+@keyframes kuromate-speak {
   0% {
     height: 3px;
   }
@@ -1608,7 +1608,7 @@ body {
   }
 }
 
-@keyframes kurozo-gesture {
+@keyframes kuromate-gesture {
   0% {
     transform: rotate(-16deg);
   }
@@ -1617,7 +1617,7 @@ body {
   }
 }
 
-@keyframes kurozo-blink {
+@keyframes kuromate-blink {
   0%,
   94%,
   100% {
@@ -1628,7 +1628,7 @@ body {
   }
 }
 
-@keyframes kurozo-react {
+@keyframes kuromate-react {
   0% {
     transform: translateY(0) rotate(0deg);
   }
@@ -1698,7 +1698,7 @@ body {
     order: 3;
   }
 
-  /* 2-host wide studio: Kurozo 1 | Studio Monitor | Kurozo 2 behind the same desk */
+  /* 2-host wide studio: Kuromate 1 | Studio Monitor | Kuromate 2 behind the same desk */
   .studio-stage[data-hosts="2"] .studio-set-body {
     display: grid;
     grid-template-columns: minmax(150px, 1fr) minmax(260px, 1.4fr) minmax(150px, 1fr);
@@ -1723,7 +1723,7 @@ body {
     order: 3;
   }
 
-  /* 3-host studio: wall-mounted Studio Monitor above center moderator, 3 Kurozos below behind shared desk */
+  /* 3-host studio: wall-mounted Studio Monitor above center moderator, 3 Kuromates below behind shared desk */
   .studio-stage[data-hosts="3"] .studio-set-body {
     display: flex;
     flex-direction: column-reverse;
@@ -1749,17 +1749,17 @@ body {
     display: none;
   }
 
-  .kurozo-head {
+  .kuromate-head {
     width: 52px;
     height: 42px;
   }
 
-  .kurozo-torso-wrap {
+  .kuromate-torso-wrap {
     width: 62px;
     height: 32px;
   }
 
-  .kurozo-torso {
+  .kuromate-torso {
     width: 40px;
     height: 30px;
   }
