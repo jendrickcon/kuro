@@ -12,13 +12,13 @@ Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a diff
 
 ## Current Status
 
-- **Milestone (`WP-008`):** Verified mock-powered Next.js application (`WP-001`–`WP-005` and `WP-007` merged on `main`; `WP-008` QA on `test/wp-008-mock-milestone`). Vercel deployment pending owner authentication.
-- **Pending live AI (`WP-003B` / `WP-009`+):** Live Gemini script generation, hosted segmented TTS voices, and stitched audio downloads are not connected yet.
+- **Milestone (`WP-008`):** Verified mock-powered Next.js application (`WP-001`–`WP-005`, `WP-007`, `WP-008.5` onboarding, and `WP-008.6` **Kuromates** rename on `main`; `WP-008` QA on `test/wp-008-mock-milestone`).
+- **Pending live AI (`WP-009`+):** Live Gemini script generation, hosted segmented TTS voices, and stitched audio downloads follow `WP-008`.
 
 ## Core MVP (Mock Milestone Active)
 
-- Input 10–2,500 chars; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** or **3** hosts.
-- Production studio player (`Try sample episode` fallback or validated mock API) with shared-desk **Kurozos**, 5 contextual monitor visuals, timed silent playback, synchronized captions, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
+- Input 10–2,500 chars; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** or **3** Kuromates.
+- Production studio player (`Try sample episode` fallback or validated mock API) with shared-desk **Kuromates**, 5 contextual monitor visuals, timed silent playback, synchronized captions, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
 - Live multi-host Gemini scripts and segmented/stitched audio follow `WP-003B`.
 
 See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusions, and roadmap.
@@ -51,7 +51,7 @@ npm run start
 | Lucky | Claude Code (`Opus` -> `Sonnet` / `Fable`) | UI/UX research, wireframes, visual system, isolated UI branches, demo visuals |
 | JR | Codex (`Astra` -> `Sol` / `Terra`) | Episode contract, Zod schemas, Gemini/TTS spike, audio stitching, API routes, backend tests |
 
-See [AGENTS.md](./AGENTS.md) for branch rules, agent boundaries, and handoff standards.
+See [AGENTS.md](./AGENTS.md) and [CONTRIBUTING.md](./CONTRIBUTING.md) for branch rules, contributor onboarding, and handoff standards.
 
 ## Notice
 
