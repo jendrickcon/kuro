@@ -2,10 +2,12 @@
 
 import type { Episode, EpisodeLength, Tone } from "@contracts/episode.schema";
 import { useEpisodePlayback } from "@/hooks/use-episode-playback";
+import { useSegmentTtsPreview } from "@/hooks/use-segment-tts-preview";
 import { CaptionPanel } from "@/components/kuro/player/caption-panel";
 import { PlaybackControls } from "@/components/kuro/player/playback-controls";
 import { PlayerNotice } from "@/components/kuro/player/player-notice";
 import { PodcastStage } from "@/components/kuro/player/podcast-stage";
+import { SegmentVoicePreview } from "@/components/kuro/player/segment-voice-preview";
 
 export interface EpisodePlayerProps {
   episode: Episode;
@@ -32,9 +34,37 @@ export function EpisodePlayer({
 }: EpisodePlayerProps) {
   const playback = useEpisodePlayback(episode);
   const currentSegment = playback.currentSegment;
+  const ttsPreview = useSegmentTtsPreview({
+    episodeId: episode.id,
+    segment: currentSegment,
+    activeHost: playback.activeHost,
+    onBeforePlay: playback.pause,
+  });
 
   if (!currentSegment) {
     return null;
+  }
+
+  function handleBackToForm() {
+    ttsPreview.stop();
+    onBack();
+  }
+
+  function handleToggleTimedPlayPause() {
+    if (!playback.isPlaying) {
+      ttsPreview.stop();
+    }
+    playback.togglePlayPause();
+  }
+
+  function handleRestartEpisode() {
+    ttsPreview.stop();
+    playback.restart();
+  }
+
+  function handleReplayEpisode() {
+    ttsPreview.stop();
+    playback.replay();
   }
 
   return (
@@ -70,7 +100,7 @@ export function EpisodePlayer({
 
         <button
           type="button"
-          onClick={onBack}
+          onClick={handleBackToForm}
           className="min-h-11 shrink-0 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 sm:text-sm"
         >
           Back to form
@@ -103,7 +133,13 @@ export function EpisodePlayer({
         previousHost={playback.previousHost}
         status={playback.status}
         audioAvailability={playback.audioAvailability}
-        onReplay={playback.replay}
+        onReplay={handleReplayEpisode}
+      />
+
+      <SegmentVoicePreview
+        activeHost={playback.activeHost}
+        segment={currentSegment}
+        preview={ttsPreview}
       />
 
       <PlaybackControls
@@ -114,10 +150,10 @@ export function EpisodePlayer({
         playbackProgress={playback.playbackProgress}
         canPrev={playback.canPrev}
         canNext={playback.canNext}
-        onTogglePlayPause={playback.togglePlayPause}
+        onTogglePlayPause={handleToggleTimedPlayPause}
         onPrevious={playback.previous}
         onNext={playback.next}
-        onRestart={playback.restart}
+        onRestart={handleRestartEpisode}
       />
     </article>
   );

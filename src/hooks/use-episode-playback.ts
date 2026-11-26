@@ -118,9 +118,9 @@ export function useEpisodePlayback(episode: Episode): EpisodePlaybackState {
       return `Audio clips are unavailable for ${totalSegments - readyAudioCount} of ${totalSegments} turns. Captions remain active for every turn.`;
     }
     if (audioAvailability === "none") {
-      return "Timed preview mode — captions advance automatically. Hosted voice audio is not connected yet.";
+      return "Timed preview mode — captions advance automatically. Use Preview Kuromate voice below for single-turn hosted speech; full-episode audio arrives next.";
     }
-    return "Timed preview mode — hosted audio playback connects in a later stage.";
+    return "Timed preview mode — single-turn Kuromate voice preview is available; full-episode audio sync connects later.";
   }, [audioAvailability, readyAudioCount, totalSegments]);
 
   useEffect(() => {

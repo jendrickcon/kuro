@@ -12,8 +12,8 @@ Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a diff
 
 ## Current Status
 
-- **Milestone (`WP-008`):** Verified mock-powered Next.js application (`WP-001`–`WP-005`, `WP-007`, `WP-008.5` onboarding, and `WP-008.6` **Kuromates** rename on `main`; `WP-008` QA on `test/wp-008-mock-milestone`).
-- **Pending live AI (`WP-009`+):** Live Gemini script generation, hosted segmented TTS voices, and stitched audio downloads follow `WP-008`.
+- **Completed (`WP-008`–`WP-010`):** Verified Next.js application (`WP-008` mock milestone, `WP-008.6` **Kuromates** rename, `WP-009` live Gemini script generation on `main`, and `WP-010` single-turn hosted Kuromate TTS preview on `feat/wp-010-segmented-tts`).
+- **Pending live orchestration (`WP-011`+):** Full-episode audio queue, synchronized audio playback, and stitched downloads follow `WP-010`.
 
 ## Core MVP (Mock Milestone Active)
 
@@ -26,12 +26,12 @@ See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusion
 ## Tech Stack
 
 - **App:** Next.js (App Router), React, TypeScript, Tailwind CSS, Zod
-- **AI & Audio (Pending `WP-003B`):** One verified Gemini Flash-class model + segmented TTS with verified stitching
-- **Hosting & Workflow:** Vercel (pending owner auth), GitHub
+- **AI & Audio:** Gemini `gemini-3.8-flash` (`v1`) scripts + `gemini-3.8-flash-tts` (`v1beta`) single-turn voices; full audio stitching pending `WP-011`
+- **Hosting & Workflow:** Vercel, GitHub
 
 ## Local Setup
 
-Prerequisites: Node.js 24+ and npm. Zero API keys are needed for the mock milestone (`GEMINI_API_KEY` in `.env.example` is server-side only for `WP-003B`/live AI; never prefix with `NEXT_PUBLIC_`).
+Prerequisites: Node.js 24+ and npm. Zero API keys are needed for the sample/mock flow (`GEMINI_API_KEY`, `GEMINI_TEXT_MODEL`, and `GEMINI_TTS_MODEL` in `.env.example` are server-side only; never prefix with `NEXT_PUBLIC_`).
 
 ```bash
 npm install
@@ -39,6 +39,8 @@ npm run dev
 npm run typecheck
 npm run lint
 npm run test:schema
+npm run test:generation
+npm run test:tts
 npm run build
 npm run start
 ```

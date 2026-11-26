@@ -43,8 +43,8 @@ export function PlayerNotice({
       ) : source === "generated" ? (
         <p className="font-semibold">
           {usedFallback
-            ? `Generated using an available Gemini model. (${episode.length}, ${episode.segments.length} turns — hosted Kuromate voices connect later.)`
-            : `Generated script by Gemini (${episode.length}, ${episode.segments.length} turns) — script only, hosted Kuromate voices connect later.`}
+            ? `Generated using an available Gemini model. (${episode.length}, ${episode.segments.length} turns — single-turn Kuromate voice preview ready; full episode sync follows.)`
+            : `Generated script by Gemini (${episode.length}, ${episode.segments.length} turns) — single-turn Kuromate voice preview ready; full episode sync follows.`}
         </p>
       ) : lengthDiffers ? (
         <p className="font-semibold">
