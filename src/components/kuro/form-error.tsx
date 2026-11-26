@@ -21,6 +21,7 @@ export interface RecoverableErrorCardProps {
   containerRef?: RefObject<HTMLDivElement | null>;
   onRetry: () => void;
   onEdit: () => void;
+  onTrySample?: () => void;
 }
 
 export function RecoverableErrorCard({
@@ -29,6 +30,7 @@ export function RecoverableErrorCard({
   containerRef,
   onRetry,
   onEdit,
+  onTrySample,
 }: RecoverableErrorCardProps) {
   return (
     <div
@@ -37,7 +39,7 @@ export function RecoverableErrorCard({
       role="alert"
       className="rounded-xl border-2 border-red-300 bg-red-50 p-4 text-red-950 focus:outline-none"
     >
-      <p className="text-sm font-bold">Could not prepare conversation</p>
+      <p className="text-sm font-bold">Could not create conversation</p>
       <p className="mt-1 text-sm text-red-900">{message}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {retryable ? (
@@ -56,6 +58,15 @@ export function RecoverableErrorCard({
         >
           Edit input
         </button>
+        {onTrySample ? (
+          <button
+            type="button"
+            onClick={onTrySample}
+            className="min-h-11 rounded-lg border border-red-400 bg-white px-4 py-2 text-sm font-semibold text-red-950 hover:bg-red-100"
+          >
+            Try sample episode
+          </button>
+        ) : null}
       </div>
     </div>
   );

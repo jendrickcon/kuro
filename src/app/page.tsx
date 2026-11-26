@@ -9,7 +9,7 @@ export default function HomePage() {
             Kuro
           </h1>
           <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
-            Mock preview
+            Timed preview
           </span>
         </div>
         <p className="mt-0.5 text-sm font-semibold text-blue-800">

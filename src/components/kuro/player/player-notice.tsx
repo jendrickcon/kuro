@@ -2,7 +2,7 @@ import type { Episode, EpisodeLength, Tone } from "@contracts/episode.schema";
 import type { AudioAvailability } from "@/hooks/use-episode-playback";
 
 export interface PlayerNoticeProps {
-  source: "mock" | "sample";
+  source: "generated" | "mock" | "sample";
   episode: Episode;
   requestedOptions?: {
     tone: Tone;
@@ -35,17 +35,22 @@ export function PlayerNotice({
     >
       {source === "sample" ? (
         <p className="font-semibold">
-          Sample episode loaded directly (2 hosts) — not generated from form text.
+          Sample episode loaded directly ({episode.hosts.length} Kuromates) — not generated from
+          form text.
+        </p>
+      ) : source === "generated" ? (
+        <p className="font-semibold">
+          Generated script by Gemini ({episode.length}, {episode.segments.length} turns) — script
+          only, hosted Kuromate voices connect later.
         </p>
       ) : lengthDiffers ? (
         <p className="font-semibold">
           Representative mock episode ({episode.length}, {episode.segments.length} turns) returned
-          for {requestedOptions?.length} preview while live Gemini script generation is pending.
+          for {requestedOptions?.length} preview.
         </p>
       ) : (
         <p className="font-semibold">
-          Mock episode preview — validated local fixture data while live Gemini script generation
-          is pending.
+          Mock episode preview — validated local fixture data (mock mode enabled).
         </p>
       )}
       {notice ? <p>{notice}</p> : null}
