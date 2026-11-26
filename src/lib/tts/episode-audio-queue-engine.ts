@@ -88,6 +88,7 @@ export type EpisodePlaybackStatus =
 
 export type EpisodeAudioMode = "hosted" | "timed-fallback";
 export type QueueOutageState = "none" | "config_error" | "auth_error" | "provider_outage";
+export type SegmentFailureCategory = "transient" | "permanent";
 export type SegmentFailureClass =
   | "capacity"
   | "timeout"
@@ -185,12 +186,14 @@ export interface SegmentQueueEntryView {
   errorCode: string | null;
   errorMessage: string | null;
   failureClass: SegmentFailureClass | null;
+  failureCategory: SegmentFailureCategory | null;
   retryable: boolean;
   retryAfterMs: number | null;
   requestAttempts: number;
   lastFailureAt: number | null;
   manualRetriesUsedInCycle: number;
   manualRetryAllowed: boolean;
+  manualRetryAvailable: boolean;
   generationStartedAt: number | null;
   generationCompletedAt: number | null;
 }
@@ -386,12 +389,14 @@ export function buildIdleEpisodeSnapshot(
         errorCode: null,
         errorMessage: null,
         failureClass: null,
+        failureCategory: null,
         retryable: false,
         retryAfterMs: null,
         requestAttempts: 0,
         lastFailureAt: null,
         manualRetriesUsedInCycle: 0,
         manualRetryAllowed: false,
+        manualRetryAvailable: false,
         generationStartedAt: null,
         generationCompletedAt: null,
       };
@@ -866,7 +871,7 @@ export function createEpisodeAudioQueueEngine(
         if (activePrepTurn !== null) {
           return `Preparing voice ${activePrepTurn} of ${initialBufferTarget}`;
         }
-        return "Preparing your Kuromates";
+        return "Preparing the opening voices";
       case "cooldown":
         if (bufReady === 1) {
           return secs > 0
@@ -926,11 +931,14 @@ export function createEpisodeAudioQueueEngine(
       entries[0]?.objectUrl !== null;
     const canRetryPreparation =
       !hasStartedPodcast &&
-      audioPreparationStatus === "unavailable" &&
-      entries[0]?.objectUrl === null &&
       outageState !== "config_error" &&
       outageState !== "auth_error" &&
-      isRecoverableFailureClass(entries[0]?.failureClass ?? null);
+      ((audioPreparationStatus === "unavailable" &&
+        entries[0]?.objectUrl === null &&
+        isRecoverableFailureClass(entries[0]?.failureClass ?? null)) ||
+        (audioPreparationStatus === "partial" &&
+          entries[1]?.objectUrl === null &&
+          isRecoverableFailureClass(entries[1]?.failureClass ?? null)));
 
     const isHostedAudioPlaying =
       hasStartedPodcast &&
@@ -1003,12 +1011,19 @@ export function createEpisodeAudioQueueEngine(
         errorCode: entry.errorCode,
         errorMessage: entry.errorMessage,
         failureClass: entry.failureClass,
+        failureCategory:
+          entry.failureClass === null
+            ? null
+            : isRecoverableFailureClass(entry.failureClass)
+              ? "transient"
+              : "permanent",
         retryable: entry.retryable,
         retryAfterMs: entry.retryAfterMs,
         requestAttempts: entry.requestAttempts,
         lastFailureAt: entry.lastFailureAt,
         manualRetriesUsedInCycle: entry.manualRetriesUsedInCycle,
         manualRetryAllowed: isEntryManuallyRetryable(entry),
+        manualRetryAvailable: isEntryManuallyRetryable(entry),
         generationStartedAt: entry.generationStartedAt,
         generationCompletedAt: entry.generationCompletedAt,
       })),

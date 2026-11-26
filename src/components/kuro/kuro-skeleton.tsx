@@ -16,6 +16,11 @@ import { RecoverableErrorCard } from "@/components/kuro/form-error";
 import { GenerationStatus } from "@/components/kuro/generation-status";
 import { EpisodePlayer } from "@/components/kuro/player/episode-player";
 import { getSampleEpisode } from "@/lib/episode/fixtures";
+import {
+  deriveUnifiedLoadingView,
+  type ScriptLoadingPhase,
+} from "@/lib/episode/unified-loading-state";
+import { useEpisodeAudioQueue } from "@/hooks/use-episode-audio-queue";
 
 interface ResultState {
   instanceId: number;
@@ -38,7 +43,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
   const [tone, setTone] = useState<Tone>("casual");
   const [length, setLength] = useState<EpisodeLength>("quick");
   const [hostCount, setHostCount] = useState<2 | 3>(2);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [scriptPhase, setScriptPhase] = useState<ScriptLoadingPhase>("idle");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [requestError, setRequestError] = useState<{ message: string; retryable: boolean } | null>(
     null,
@@ -46,9 +51,21 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
   const [result, setResult] = useState<ResultState | null>(null);
 
   const isSubmittingRef = useRef(false);
+  const scriptAbortRef = useRef<AbortController | null>(null);
   const episodeCounterRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const errorCardRef = useRef<HTMLDivElement | null>(null);
+
+  const queue = useEpisodeAudioQueue(result?.episode ?? null, {
+    minRequestIntervalMs: ttsRequestIntervalMs,
+  });
+
+  const loadingView = deriveUnifiedLoadingView({
+    scriptPhase,
+    episode: result?.episode ?? null,
+    queueSnapshot: queue.snapshot,
+    hostCount,
+  });
 
   function focusTextarea() {
     window.requestAnimationFrame(() => {
@@ -108,32 +125,55 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
       return;
     }
 
+    const controller = new AbortController();
+    scriptAbortRef.current = controller;
     isSubmittingRef.current = true;
     setFieldError(null);
     setRequestError(null);
-    setIsSubmitting(true);
+    setResult(null);
+    setScriptPhase("generating");
 
     try {
       const response = await fetch("/api/episodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify(requestCheck.data),
       });
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      setScriptPhase("validating");
 
       let json: unknown;
       try {
         json = await response.json();
       } catch {
-        setRequestError({
-          message: "The server returned an unreadable response. Your text is safe—please try again.",
-          retryable: true,
-        });
-        focusErrorCard();
+        if (!controller.signal.aborted) {
+          setScriptPhase("idle");
+          setRequestError({
+            message:
+              "The server returned an unreadable response. Your text is safe—please try again.",
+            retryable: true,
+          });
+          focusErrorCard();
+        }
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      if (controller.signal.aborted) {
         return;
       }
 
       const parsed = CreateEpisodeResponseSchema.safeParse(json);
       if (!parsed.success) {
+        setScriptPhase("idle");
         setRequestError({
           message: "Received an unexpected episode response format. Please try again.",
           retryable: true,
@@ -143,6 +183,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
       }
 
       if (!parsed.data.ok) {
+        setScriptPhase("idle");
         if (parsed.data.error.code === "INVALID_INPUT") {
           setFieldError(parsed.data.error.message);
           focusTextarea();
@@ -158,6 +199,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
 
       const episodeCheck = EpisodeSchema.safeParse(parsed.data.episode);
       if (!episodeCheck.success) {
+        setScriptPhase("idle");
         setRequestError({
           message: "The returned episode could not be verified. Please try again.",
           retryable: true,
@@ -169,6 +211,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
       const usedFallback = response.headers.get("x-kuro-fallback-used") === "true";
       const source = episodeCheck.data.status === "ready" ? "generated" : "mock";
       episodeCounterRef.current += 1;
+      setScriptPhase("idle");
       setResult({
         instanceId: episodeCounterRef.current,
         episode: episodeCheck.data,
@@ -176,15 +219,23 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
         usedFallback: source === "generated" ? usedFallback : false,
         requestedOptions: { tone, length, hostCount },
       });
-    } catch {
-      setRequestError({
-        message: "Could not reach the episode service. Check your connection and try again.",
-        retryable: true,
-      });
-      focusErrorCard();
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
+      if (!controller.signal.aborted) {
+        setScriptPhase("idle");
+        setRequestError({
+          message: "Could not reach the episode service. Check your connection and try again.",
+          retryable: true,
+        });
+        focusErrorCard();
+      }
     } finally {
-      isSubmittingRef.current = false;
-      setIsSubmitting(false);
+      if (scriptAbortRef.current === controller) {
+        scriptAbortRef.current = null;
+        isSubmittingRef.current = false;
+      }
     }
   }
 
@@ -192,6 +243,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
     if (isSubmittingRef.current) return;
     setFieldError(null);
     setRequestError(null);
+    setScriptPhase("idle");
     const sample = EpisodeSchema.parse(getSampleEpisode());
     episodeCounterRef.current += 1;
     setResult({
@@ -201,29 +253,48 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
     });
   }
 
-  function handleBackToForm() {
+  function handleCancelOrBack() {
+    scriptAbortRef.current?.abort();
+    scriptAbortRef.current = null;
+    isSubmittingRef.current = false;
+    setScriptPhase("idle");
+    queue.cancelPreparation();
+    queue.dispose();
     setResult(null);
     focusTextarea();
   }
 
-  if (result) {
+  if (loadingView.showFullStudio && result && queue.snapshot) {
     return (
       <EpisodePlayer
-        key={result.instanceId}
         episode={result.episode}
         source={result.source}
         usedFallback={result.usedFallback}
-        ttsRequestIntervalMs={ttsRequestIntervalMs}
+        queue={queue}
         requestedOptions={result.requestedOptions}
-        onBack={handleBackToForm}
+        onBack={handleCancelOrBack}
+      />
+    );
+  }
+
+  if (loadingView.showLoadingPanel) {
+    return (
+      <GenerationStatus
+        view={loadingView}
+        episode={result?.episode ?? null}
+        queueSnapshot={queue.snapshot}
+        onStartPodcast={queue.startPodcast}
+        onStartWithAvailableAudioAndCaptions={queue.startWithCaptionsAndAvailableAudio}
+        onContinuePreparingVoices={queue.retryPreparation}
+        onContinueWithTimedCaptions={queue.continueWithTimedCaptions}
+        onCancelAndEdit={handleCancelOrBack}
       />
     );
   }
 
   return (
     <div className="space-y-4">
-      {isSubmitting ? <GenerationStatus /> : null}
-      {requestError && !isSubmitting ? (
+      {requestError ? (
         <RecoverableErrorCard
           message={requestError.message}
           retryable={requestError.retryable}
@@ -241,7 +312,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
         tone={tone}
         length={length}
         hostCount={hostCount}
-        isSubmitting={isSubmitting}
+        isSubmitting={scriptPhase !== "idle"}
         fieldError={fieldError}
         textareaRef={textareaRef}
         onInputChange={handleInputChange}

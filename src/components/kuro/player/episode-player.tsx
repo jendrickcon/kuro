@@ -1,8 +1,7 @@
 "use client";
 
 import type { Episode, EpisodeLength, Tone } from "@contracts/episode.schema";
-import { useEpisodeAudioQueue } from "@/hooks/use-episode-audio-queue";
-import { AudioPreparationPanel } from "@/components/kuro/player/audio-preparation-panel";
+import type { EpisodeAudioQueueHookResult } from "@/hooks/use-episode-audio-queue";
 import { AudioStatusBar } from "@/components/kuro/player/audio-status-bar";
 import { CaptionPanel } from "@/components/kuro/player/caption-panel";
 import { PlaybackControls } from "@/components/kuro/player/playback-controls";
@@ -13,7 +12,7 @@ export interface EpisodePlayerProps {
   episode: Episode;
   source: "generated" | "mock" | "sample";
   usedFallback?: boolean;
-  ttsRequestIntervalMs?: number;
+  queue: EpisodeAudioQueueHookResult;
   requestedOptions?: {
     tone: Tone;
     length: EpisodeLength;
@@ -23,23 +22,23 @@ export interface EpisodePlayerProps {
 }
 
 /**
- * Production multi-host player driven by pre-podcast buffering, sequential
- * paced Kuromate audio queue, real audio synchronization, and caption fallback.
+ * Active Kuro Studio multi-host player rendered strictly after initial voice preparation
+ * or explicit caption/partial start, driven by the sequential paced audio queue.
  */
 export function EpisodePlayer({
   episode,
   source,
   usedFallback,
-  ttsRequestIntervalMs,
+  queue,
   requestedOptions,
   onBack,
 }: EpisodePlayerProps) {
-  const queue = useEpisodeAudioQueue(episode, {
-    minRequestIntervalMs: ttsRequestIntervalMs,
-  });
   const { snapshot } = queue;
-  const currentSegment = snapshot.currentSegment;
+  if (!snapshot || !snapshot.hasStartedPodcast) {
+    return null;
+  }
 
+  const currentSegment = snapshot.currentSegment;
   if (!currentSegment) {
     return null;
   }
@@ -51,7 +50,9 @@ export function EpisodePlayer({
   }
 
   const audioAvailability =
-    snapshot.audioMode === "timed-fallback" || snapshot.failedCount > 0 || snapshot.outageState !== "none"
+    snapshot.audioMode === "timed-fallback" ||
+    snapshot.failedCount > 0 ||
+    snapshot.outageState !== "none"
       ? "partial"
       : snapshot.readyCount === snapshot.totalSegments && snapshot.totalSegments > 0
         ? "full"
@@ -97,90 +98,66 @@ export function EpisodePlayer({
         </button>
       </div>
 
-      {!snapshot.hasStartedPodcast ? (
-        <>
-          <AudioPreparationPanel
-            episode={episode}
-            snapshot={snapshot}
-            onStartPodcast={queue.startPodcast}
-            onStartWithCaptionsAndAvailableAudio={queue.startWithCaptionsAndAvailableAudio}
-            onContinueWithTimedCaptions={queue.continueWithTimedCaptions}
-            onRetryPreparation={queue.retryPreparation}
-            onCancelAndEdit={handleBackToForm}
-          />
-          <PodcastStage
-            episode={episode}
-            currentSegment={currentSegment}
-            currentSegmentIndex={snapshot.currentIndex}
-            status={snapshot.stageStatus}
-            reactionHostId={snapshot.reactionHostId}
-            isPreparingAudio
-          />
-        </>
-      ) : (
-        <>
-          <PlayerNotice
-            source={source}
-            usedFallback={usedFallback}
-            episode={episode}
-            requestedOptions={requestedOptions}
-            audioAvailability={audioAvailability}
-            notice={snapshot.notice}
-          />
+      <PlayerNotice
+        source={source}
+        usedFallback={usedFallback}
+        episode={episode}
+        requestedOptions={requestedOptions}
+        audioAvailability={audioAvailability}
+        notice={snapshot.notice}
+      />
 
-          <PodcastStage
-            episode={episode}
-            currentSegment={currentSegment}
-            currentSegmentIndex={snapshot.currentIndex}
-            status={snapshot.stageStatus}
-            reactionHostId={snapshot.reactionHostId}
-            isSilentFallback={snapshot.isTimedFallbackActive}
-          />
+      <PodcastStage
+        episode={episode}
+        currentSegment={currentSegment}
+        currentSegmentIndex={snapshot.currentIndex}
+        status={snapshot.stageStatus}
+        reactionHostId={snapshot.reactionHostId}
+        isSilentFallback={snapshot.isTimedFallbackActive}
+      />
 
-          <CaptionPanel
-            activeHost={snapshot.activeHost}
-            currentSegment={currentSegment}
-            currentSegmentIndex={snapshot.currentIndex}
-            totalSegments={snapshot.totalSegments}
-            previousSegment={snapshot.previousSegment}
-            previousHost={snapshot.previousHost}
-            status={snapshot.stageStatus}
-            audioAvailability={audioAvailability}
-            segmentHasAudio={snapshot.currentSegmentHasAudio}
-            segmentAudioFailed={
-              snapshot.currentSegmentFailed ||
-              (snapshot.audioMode === "timed-fallback" && !snapshot.currentSegmentHasAudio)
-            }
-            onReplay={queue.replay}
-          />
+      <CaptionPanel
+        activeHost={snapshot.activeHost}
+        currentSegment={currentSegment}
+        currentSegmentIndex={snapshot.currentIndex}
+        totalSegments={snapshot.totalSegments}
+        previousSegment={snapshot.previousSegment}
+        previousHost={snapshot.previousHost}
+        status={snapshot.stageStatus}
+        audioAvailability={audioAvailability}
+        segmentHasAudio={snapshot.currentSegmentHasAudio}
+        segmentAudioFailed={
+          snapshot.currentSegmentFailed ||
+          (snapshot.audioMode === "timed-fallback" && !snapshot.currentSegmentHasAudio)
+        }
+        onReplay={queue.replay}
+      />
 
-          <AudioStatusBar
-            snapshot={snapshot}
-            onResumeAutoplay={queue.play}
-            onRetryCurrentSegment={queue.retryCurrentSegment}
-            onSkipCurrentSegment={queue.skipCurrentSegment}
-            onContinueWithTimedCaptions={queue.continueWithTimedCaptions}
-            onRetryHostedAudio={queue.retryHostedAudio}
-            onBackToForm={handleBackToForm}
-          />
+      <AudioStatusBar
+        snapshot={snapshot}
+        onResumeAutoplay={queue.play}
+        onRetryCurrentSegment={queue.retryCurrentSegment}
+        onSkipCurrentSegment={queue.skipCurrentSegment}
+        onContinueWithTimedCaptions={queue.continueWithTimedCaptions}
+        onRetryHostedAudio={queue.retryHostedAudio}
+        onBackToForm={handleBackToForm}
+      />
 
-          <PlaybackControls
-            episode={episode}
-            status={snapshot.stageStatus}
-            audioStatus={snapshot.status}
-            audioMode={snapshot.audioMode}
-            currentSegmentIndex={snapshot.currentIndex}
-            totalSegments={snapshot.totalSegments}
-            playbackProgress={snapshot.playbackProgress}
-            canPrev={snapshot.canPrev}
-            canNext={snapshot.canNext}
-            onTogglePlayPause={queue.togglePlayPause}
-            onPrevious={queue.previous}
-            onNext={queue.next}
-            onRestart={queue.restart}
-          />
-        </>
-      )}
+      <PlaybackControls
+        episode={episode}
+        status={snapshot.stageStatus}
+        audioStatus={snapshot.status}
+        audioMode={snapshot.audioMode}
+        currentSegmentIndex={snapshot.currentIndex}
+        totalSegments={snapshot.totalSegments}
+        playbackProgress={snapshot.playbackProgress}
+        canPrev={snapshot.canPrev}
+        canNext={snapshot.canNext}
+        onTogglePlayPause={queue.togglePlayPause}
+        onPrevious={queue.previous}
+        onNext={queue.next}
+        onRestart={queue.restart}
+      />
     </article>
   );
 }

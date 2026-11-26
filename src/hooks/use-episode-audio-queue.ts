@@ -355,7 +355,7 @@ function createBrowserAudioDriver(): AudioDriver {
 }
 
 export interface EpisodeAudioQueueHookResult {
-  snapshot: EpisodeAudioQueueSnapshot;
+  snapshot: EpisodeAudioQueueSnapshot | null;
   startPreparation: () => void;
   cancelPreparation: () => void;
   startPodcast: () => void;
@@ -375,23 +375,28 @@ export interface EpisodeAudioQueueHookResult {
   dispose: () => void;
 }
 
-/** Connects the authoritative episode audio-queue engine to React with deterministic cleanup on unmount or episode switch. */
+/** Connects the authoritative episode audio-queue engine across unified preparation and playback with clean lifecycle disposal. */
 export function useEpisodeAudioQueue(
-  episode: Episode,
+  episode: Episode | null,
   options?: { minRequestIntervalMs?: number },
 ): EpisodeAudioQueueHookResult {
   const minRequestIntervalMs = options?.minRequestIntervalMs;
   const [state, setState] = useState<{
-    episode: Episode;
-    snapshot: EpisodeAudioQueueSnapshot;
+    episode: Episode | null;
+    snapshot: EpisodeAudioQueueSnapshot | null;
   }>(() => ({
     episode,
-    snapshot: buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs }),
+    snapshot: episode ? buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs }) : null,
   }));
 
   const engineRef = useRef<EpisodeAudioQueueController | null>(null);
 
   useEffect(() => {
+    if (!episode) {
+      engineRef.current = null;
+      return;
+    }
+
     const engine = createEpisodeAudioQueueEngine(episode, {
       fetchSegmentAudio: fetchBrowserSegmentAudio,
       audioDriver: createBrowserAudioDriver(),
@@ -415,12 +420,16 @@ export function useEpisodeAudioQueue(
   }, [episode, minRequestIntervalMs]);
 
   const snapshot =
-    state.episode === episode
-      ? state.snapshot
-      : buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs });
+    episode === null
+      ? null
+      : state.episode === episode
+        ? state.snapshot
+        : buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs });
+
+  const cooldownActive = snapshot?.cooldownActive ?? false;
 
   useEffect(() => {
-    if (!snapshot.cooldownActive) {
+    if (!cooldownActive) {
       return;
     }
     const intervalId = window.setInterval(() => {
@@ -429,7 +438,7 @@ export function useEpisodeAudioQueue(
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [snapshot.cooldownActive]);
+  }, [cooldownActive]);
 
   const startPreparation = useCallback(() => {
     engineRef.current?.startPreparation();

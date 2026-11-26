@@ -18,7 +18,7 @@ Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a diff
 ## Core MVP (Hosted Audio Active)
 
 - Input 10–2,500 chars; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** or **3** Kuromates.
-- Press **Play** for automatic hosted Kuromate voices with max-2 prefetching, synchronized captions, studio monitor visuals, shared `Retry-After` handling, explicit caption fallback, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
+- Generate an episode and follow the single loading flow as Kuro prepares opening Kuromate voices sequentially before starting playback with max-2 prefetching, synchronized captions, studio monitor visuals, shared `Retry-After` handling, explicit caption fallback, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
 
 See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusions, and roadmap.
 
