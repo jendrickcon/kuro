@@ -29,7 +29,11 @@ interface ResultState {
   };
 }
 
-export function KuroSkeleton() {
+export interface KuroSkeletonProps {
+  ttsRequestIntervalMs?: number;
+}
+
+export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
   const [input, setInput] = useState("");
   const [tone, setTone] = useState<Tone>("casual");
   const [length, setLength] = useState<EpisodeLength>("quick");
@@ -209,6 +213,7 @@ export function KuroSkeleton() {
         episode={result.episode}
         source={result.source}
         usedFallback={result.usedFallback}
+        ttsRequestIntervalMs={ttsRequestIntervalMs}
         requestedOptions={result.requestedOptions}
         onBack={handleBackToForm}
       />

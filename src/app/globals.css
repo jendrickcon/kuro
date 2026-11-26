@@ -134,6 +134,15 @@ body {
   opacity: 0.55;
 }
 
+.kuromate-seat[data-state="captioning"] .kuromate-stage-light {
+  opacity: 0.45;
+}
+
+.kuromate-seat[data-state="captioning"] .kuromate-mic-led {
+  background-color: #fbbf24;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
 .kuromate-seat[data-state="listening"] {
   opacity: 0.9;
 }

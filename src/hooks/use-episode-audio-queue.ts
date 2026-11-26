@@ -314,11 +314,53 @@ function createBrowserAudioDriver(): AudioDriver {
       }
       element = null;
     },
+
+    verifyPlayable(url: string): Promise<boolean> {
+      if (typeof Audio === "undefined") {
+        return Promise.resolve(true);
+      }
+      return new Promise((resolve) => {
+        const probe = new Audio();
+        let settled = false;
+        let timeoutId: number | null = null;
+
+        const cleanup = (result: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId !== null) {
+            window.clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          probe.onloadedmetadata = null;
+          probe.oncanplay = null;
+          probe.onerror = null;
+          probe.removeAttribute("src");
+          try {
+            probe.load();
+          } catch {
+            // Ignore probe cleanup errors.
+          }
+          resolve(result);
+        };
+
+        probe.preload = "metadata";
+        probe.onloadedmetadata = () => cleanup(true);
+        probe.oncanplay = () => cleanup(true);
+        probe.onerror = () => cleanup(false);
+        timeoutId = window.setTimeout(() => cleanup(true), 2500);
+        probe.src = url;
+      });
+    },
   };
 }
 
 export interface EpisodeAudioQueueHookResult {
   snapshot: EpisodeAudioQueueSnapshot;
+  startPreparation: () => void;
+  cancelPreparation: () => void;
+  startPodcast: () => void;
+  startWithCaptionsAndAvailableAudio: () => void;
+  retryPreparation: () => void;
   play: () => void;
   pause: () => void;
   togglePlayPause: () => void;
@@ -334,13 +376,17 @@ export interface EpisodeAudioQueueHookResult {
 }
 
 /** Connects the authoritative episode audio-queue engine to React with deterministic cleanup on unmount or episode switch. */
-export function useEpisodeAudioQueue(episode: Episode): EpisodeAudioQueueHookResult {
+export function useEpisodeAudioQueue(
+  episode: Episode,
+  options?: { minRequestIntervalMs?: number },
+): EpisodeAudioQueueHookResult {
+  const minRequestIntervalMs = options?.minRequestIntervalMs;
   const [state, setState] = useState<{
     episode: Episode;
     snapshot: EpisodeAudioQueueSnapshot;
   }>(() => ({
     episode,
-    snapshot: buildIdleEpisodeSnapshot(episode),
+    snapshot: buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs }),
   }));
 
   const engineRef = useRef<EpisodeAudioQueueController | null>(null);
@@ -349,12 +395,15 @@ export function useEpisodeAudioQueue(episode: Episode): EpisodeAudioQueueHookRes
     const engine = createEpisodeAudioQueueEngine(episode, {
       fetchSegmentAudio: fetchBrowserSegmentAudio,
       audioDriver: createBrowserAudioDriver(),
+      minRequestIntervalMs,
     });
     engineRef.current = engine;
 
     const unsubscribe = engine.subscribe((nextSnapshot) => {
       setState({ episode, snapshot: nextSnapshot });
     });
+
+    engine.startPreparation();
 
     return () => {
       unsubscribe();
@@ -363,10 +412,12 @@ export function useEpisodeAudioQueue(episode: Episode): EpisodeAudioQueueHookRes
         engineRef.current = null;
       }
     };
-  }, [episode]);
+  }, [episode, minRequestIntervalMs]);
 
   const snapshot =
-    state.episode === episode ? state.snapshot : buildIdleEpisodeSnapshot(episode);
+    state.episode === episode
+      ? state.snapshot
+      : buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs });
 
   useEffect(() => {
     if (!snapshot.cooldownActive) {
@@ -379,6 +430,26 @@ export function useEpisodeAudioQueue(episode: Episode): EpisodeAudioQueueHookRes
       window.clearInterval(intervalId);
     };
   }, [snapshot.cooldownActive]);
+
+  const startPreparation = useCallback(() => {
+    engineRef.current?.startPreparation();
+  }, []);
+
+  const cancelPreparation = useCallback(() => {
+    engineRef.current?.cancelPreparation();
+  }, []);
+
+  const startPodcast = useCallback(() => {
+    engineRef.current?.startPodcast();
+  }, []);
+
+  const startWithCaptionsAndAvailableAudio = useCallback(() => {
+    engineRef.current?.startWithCaptionsAndAvailableAudio();
+  }, []);
+
+  const retryPreparation = useCallback(() => {
+    engineRef.current?.retryPreparation();
+  }, []);
 
   const play = useCallback(() => {
     engineRef.current?.play();
@@ -430,6 +501,11 @@ export function useEpisodeAudioQueue(episode: Episode): EpisodeAudioQueueHookRes
 
   return {
     snapshot,
+    startPreparation,
+    cancelPreparation,
+    startPodcast,
+    startWithCaptionsAndAvailableAudio,
+    retryPreparation,
     play,
     pause,
     togglePlayPause,

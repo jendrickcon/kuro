@@ -4,6 +4,7 @@ import type { Host } from "@contracts/episode.schema";
 export type KuromateHostState =
   | "idle"
   | "speaking"
+  | "captioning"
   | "listening"
   | "reacting"
   | "paused"

@@ -35,7 +35,7 @@ function resolveStatusPill(snapshot: EpisodeAudioQueueSnapshot): {
   }
   if (snapshot.cooldownActive) {
     return {
-      label: "Voice generation paused",
+      label: "Voice generation is briefly paused",
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
     };
   }
@@ -53,8 +53,10 @@ function resolveStatusPill(snapshot: EpisodeAudioQueueSnapshot): {
   }
   if (snapshot.status === "playing") {
     return {
-      label: "Hosted audio",
-      toneClass: "border-emerald-300 bg-emerald-50 text-emerald-950",
+      label: snapshot.isTimedFallbackActive ? "Timed turn" : "Hosted audio",
+      toneClass: snapshot.isTimedFallbackActive
+        ? "border-amber-300 bg-amber-50 text-amber-950"
+        : "border-emerald-300 bg-emerald-50 text-emerald-950",
     };
   }
   if (snapshot.status === "paused") {
@@ -89,6 +91,9 @@ export function AudioStatusBar({
   const hostName = snapshot.activeHost?.name ?? snapshot.activeSpeakerId;
   const hostRole = snapshot.activeHost?.role ?? "explainer";
   const hasOutage = snapshot.outageState !== "none";
+  const cooldownSecs = snapshot.cooldownActive
+    ? Math.max(1, Math.ceil(snapshot.cooldownRemainingMs / 1000))
+    : 0;
   const showSingleFailureActions =
     !hasOutage &&
     snapshot.audioMode === "hosted" &&
@@ -122,6 +127,11 @@ export function AudioStatusBar({
           >
             {pill.label}
           </span>
+          {snapshot.cooldownActive ? (
+            <span className="text-[11px] font-semibold tabular-nums text-amber-900">
+              Preparing more voices in {cooldownSecs}s.
+            </span>
+          ) : null}
           <span className="text-[11px] font-semibold tabular-nums text-slate-700">
             {snapshot.readyCount} of {snapshot.totalSegments} turns ready
           </span>
