@@ -8,10 +8,16 @@ import {
   type Episode,
 } from "@contracts/episode.schema";
 import {
+  ALLOWED_GEMINI_FALLBACK_MODELS,
+  ALLOWED_GEMINI_TEXT_MODELS,
   createGeminiTransport,
-  DEFAULT_GEMINI_TEXT_MODEL,
+  FALLBACK_GEMINI_TEXT_MODEL,
   GEMINI_REQUEST_TIMEOUT_MS,
   GeminiProviderError,
+  isCapacityFallbackEligible,
+  PRIMARY_GEMINI_TEXT_MODEL,
+  type AllowedGeminiFallbackModel,
+  type AllowedGeminiTextModel,
   type GeminiTextTransport,
 } from "@/lib/episode/gemini-client";
 import {
@@ -24,12 +30,19 @@ import {
 
 export type GenerationMode = "live" | "mock";
 
+export const MAX_MODEL_CHOICES = 2;
+export const MAX_MODEL_SWITCHES = 1;
+export const MAX_REPAIR_ATTEMPTS = 1;
+export const MAX_PROVIDER_ATTEMPTS = 3;
+
 const HOST_ACCENTS = ["#2563EB", "#D97706", "#059669"] as const;
 
 export interface GenerateEpisodeMeta {
-  model: string;
-  attempts: number;
-  retries: number;
+  requestedModel: string;
+  resolvedModel: string;
+  fallbackUsed: boolean;
+  providerAttempts: number;
+  repairAttempts: number;
   latencyMs: number;
 }
 
@@ -42,8 +55,15 @@ export interface GenerateEpisodeResult {
 export interface GenerateGeminiEpisodeOptions {
   apiKey?: string;
   model?: string;
+  fallbackModel?: string;
+  env?: Record<string, string | undefined>;
   timeoutMs?: number;
   transport?: GeminiTextTransport;
+}
+
+export interface ValidatedModelPlan {
+  requestedModel: AllowedGeminiTextModel;
+  fallbackModel: AllowedGeminiFallbackModel | null;
 }
 
 /** Uses explicit KURO_GENERATION_MODE=mock when set; defaults safely to live mode. */
@@ -53,11 +73,55 @@ export function resolveGenerationMode(
   return env.KURO_GENERATION_MODE?.trim().toLowerCase() === "mock" ? "mock" : "live";
 }
 
+export function isAllowedGeminiTextModel(value: string): value is AllowedGeminiTextModel {
+  return (ALLOWED_GEMINI_TEXT_MODELS as readonly string[]).includes(value);
+}
+
+export function isAllowedGeminiFallbackModel(value: string): value is AllowedGeminiFallbackModel {
+  return (ALLOWED_GEMINI_FALLBACK_MODELS as readonly string[]).includes(value);
+}
+
 export function resolveGeminiModel(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const configured = env.GEMINI_TEXT_MODEL?.trim();
-  return configured && configured.length > 0 ? configured : DEFAULT_GEMINI_TEXT_MODEL;
+  return configured && configured.length > 0 ? configured : PRIMARY_GEMINI_TEXT_MODEL;
+}
+
+export function resolveGeminiFallbackModel(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const configured = env.GEMINI_FALLBACK_MODEL?.trim();
+  return configured && configured.length > 0 ? configured : FALLBACK_GEMINI_TEXT_MODEL;
+}
+
+/** Enforces server-side model allowlists before any provider request runs. */
+export function resolveValidatedModelPlan(
+  env: Record<string, string | undefined> = process.env,
+  options: Pick<GenerateGeminiEpisodeOptions, "model" | "fallbackModel"> = {},
+): ValidatedModelPlan {
+  const requestedModel = options.model?.trim() || resolveGeminiModel(env);
+  if (!isAllowedGeminiTextModel(requestedModel)) {
+    throw new GeminiProviderError(
+      "unsupported_model",
+      "Configured AI script model is not supported on this server. Edit your notes or try the sample episode.",
+      false,
+    );
+  }
+
+  const configuredFallback = options.fallbackModel?.trim() || resolveGeminiFallbackModel(env);
+  if (!isAllowedGeminiFallbackModel(configuredFallback)) {
+    throw new GeminiProviderError(
+      "unsupported_model",
+      "Configured fallback AI model is not supported on this server. Edit your notes or try the sample episode.",
+      false,
+    );
+  }
+
+  return {
+    requestedModel,
+    fallbackModel: configuredFallback === requestedModel ? null : configuredFallback,
+  };
 }
 
 function stripOptionalCodeFence(rawText: string): string {
@@ -179,27 +243,54 @@ function mapProviderFailure(
   if (error.kind === "timeout") {
     return failureResult(504, "SCRIPT_GENERATION_FAILED", error.message, error.retryable, meta);
   }
-  if (error.kind === "missing_key") {
-    return failureResult(503, "SCRIPT_GENERATION_FAILED", error.message, error.retryable, meta);
+  if (error.kind === "missing_key" || error.kind === "unsupported_model") {
+    return failureResult(503, "SCRIPT_GENERATION_FAILED", error.message, false, meta);
   }
-  if (error.kind === "unavailable" || error.kind === "empty_response") {
+  if (error.kind === "auth_error" || error.kind === "safety_blocked") {
+    return failureResult(502, "SCRIPT_GENERATION_FAILED", error.message, false, meta);
+  }
+  if (
+    error.kind === "service_unavailable" ||
+    error.kind === "unavailable" ||
+    error.kind === "empty_response"
+  ) {
     return failureResult(502, "SCRIPT_GENERATION_FAILED", error.message, error.retryable, meta);
   }
   return failureResult(500, "INTERNAL_ERROR", error.message, error.retryable, meta);
 }
 
 /**
- * Generates and Zod-validates one structured multi-Kuromate script via Gemini,
- * performing at most one bounded repair retry before failing explicitly.
+ * Generates and Zod-validates one structured multi-Kuromate script via Gemini with
+ * allowlisted model selection, bounded capacity fallback (max 1 switch), and max 1 schema repair.
  */
 export async function generateGeminiEpisode(
   request: CreateEpisodeRequest,
   options: GenerateGeminiEpisodeOptions = {},
 ): Promise<GenerateEpisodeResult> {
   const startedAt = Date.now();
-  const model = options.model?.trim() || resolveGeminiModel(process.env);
+  const env = options.env ?? process.env;
+  const rawRequestedModel = options.model?.trim() || resolveGeminiModel(env);
   const timeoutMs = options.timeoutMs ?? GEMINI_REQUEST_TIMEOUT_MS;
-  const apiKey = options.apiKey !== undefined ? options.apiKey.trim() : (process.env.GEMINI_API_KEY?.trim() ?? "");
+
+  let plan: ValidatedModelPlan;
+  try {
+    plan = resolveValidatedModelPlan(env, options);
+  } catch (err) {
+    const providerErr =
+      err instanceof GeminiProviderError
+        ? err
+        : new GeminiProviderError("unsupported_model", "Unsupported AI model configuration.", false);
+    return mapProviderFailure(providerErr, {
+      requestedModel: rawRequestedModel,
+      resolvedModel: rawRequestedModel,
+      fallbackUsed: false,
+      providerAttempts: 0,
+      repairAttempts: 0,
+      latencyMs: Date.now() - startedAt,
+    });
+  }
+
+  const apiKey = options.apiKey !== undefined ? options.apiKey.trim() : (env.GEMINI_API_KEY?.trim() ?? "");
 
   if (!apiKey && !options.transport) {
     return failureResult(
@@ -207,7 +298,14 @@ export async function generateGeminiEpisode(
       "SCRIPT_GENERATION_FAILED",
       "Live Gemini script generation is not configured on this server. Edit your notes or try the sample episode.",
       false,
-      { model, attempts: 0, retries: 0, latencyMs: Date.now() - startedAt },
+      {
+        requestedModel: plan.requestedModel,
+        resolvedModel: plan.requestedModel,
+        fallbackUsed: false,
+        providerAttempts: 0,
+        repairAttempts: 0,
+        latencyMs: Date.now() - startedAt,
+      },
     );
   }
 
@@ -220,27 +318,45 @@ export async function generateGeminiEpisode(
         ? err
         : new GeminiProviderError("internal", "Unable to initialize script generator.", true);
     return mapProviderFailure(providerErr, {
-      model,
-      attempts: 0,
-      retries: 0,
+      requestedModel: plan.requestedModel,
+      resolvedModel: plan.requestedModel,
+      fallbackUsed: false,
+      providerAttempts: 0,
+      repairAttempts: 0,
       latencyMs: Date.now() - startedAt,
     });
   }
 
   const systemInstruction = buildEpisodeSystemInstruction();
   const jsonSchema = buildGeminiEpisodeJsonSchema(request);
+
+  let activeModel: string = plan.requestedModel;
+  let fallbackUsed = false;
+  let providerAttempts = 0;
+  let repairAttempts = 0;
+  let needsRepair = false;
   let lastRaw = "";
   let lastIssues: ValidationIssueSummary[] = [];
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const userPrompt =
-      attempt === 1
-        ? buildEpisodeUserPrompt(request)
-        : buildRepairPrompt(request, lastRaw, lastIssues);
+  const currentMeta = (): GenerateEpisodeMeta => ({
+    requestedModel: plan.requestedModel,
+    resolvedModel: activeModel,
+    fallbackUsed,
+    providerAttempts,
+    repairAttempts,
+    latencyMs: Date.now() - startedAt,
+  });
+
+  while (providerAttempts < MAX_PROVIDER_ATTEMPTS) {
+    const userPrompt = needsRepair
+      ? buildRepairPrompt(request, lastRaw, lastIssues)
+      : buildEpisodeUserPrompt(request);
+
+    providerAttempts += 1;
 
     try {
       const rawText = await transport({
-        model,
+        model: activeModel,
         systemInstruction,
         userPrompt,
         jsonSchema,
@@ -251,43 +367,50 @@ export async function generateGeminiEpisode(
       const parsedJson = parseJsonObjectSafe(rawText);
       if (!parsedJson.ok) {
         lastIssues = [{ path: "json", message: "Response was not valid JSON." }];
-        continue;
-      }
+      } else {
+        const candidate = assembleEpisodeCandidate(parsedJson.value, request);
+        const checked = EpisodeSchema.safeParse(candidate);
+        if (checked.success && checked.data.hosts.length === request.hostCount) {
+          const episode: Episode = checked.data;
+          const success = CreateEpisodeResponseSchema.parse({
+            ok: true,
+            episode,
+          }) as CreateEpisodeSuccess;
+          return {
+            httpStatus: 200,
+            response: success,
+            meta: currentMeta(),
+          };
+        }
 
-      const candidate = assembleEpisodeCandidate(parsedJson.value, request);
-      const checked = EpisodeSchema.safeParse(candidate);
-      if (checked.success) {
-        if (checked.data.hosts.length !== request.hostCount) {
+        if (checked.success) {
           lastIssues = [
             {
               path: "hosts",
               message: `Expected exactly ${request.hostCount} hosts, got ${checked.data.hosts.length}.`,
             },
           ];
-          continue;
+        } else {
+          lastIssues = checked.error.issues.map((issue) => ({
+            path: issue.path.join(".") || "episode",
+            message: issue.message,
+          }));
         }
-
-        const episode: Episode = checked.data;
-        const success = CreateEpisodeResponseSchema.parse({
-          ok: true,
-          episode,
-        }) as CreateEpisodeSuccess;
-        return {
-          httpStatus: 200,
-          response: success,
-          meta: {
-            model,
-            attempts: attempt,
-            retries: attempt - 1,
-            latencyMs: Date.now() - startedAt,
-          },
-        };
       }
 
-      lastIssues = checked.error.issues.map((issue) => ({
-        path: issue.path.join(".") || "episode",
-        message: issue.message,
-      }));
+      if (repairAttempts < MAX_REPAIR_ATTEMPTS && providerAttempts < MAX_PROVIDER_ATTEMPTS) {
+        repairAttempts += 1;
+        needsRepair = true;
+        continue;
+      }
+
+      return failureResult(
+        502,
+        "SCRIPT_VALIDATION_FAILED",
+        "Generated script could not pass Kuro episode validation after one repair attempt. Please try again or adjust your input.",
+        true,
+        currentMeta(),
+      );
     } catch (err) {
       const providerErr =
         err instanceof GeminiProviderError
@@ -298,31 +421,40 @@ export async function generateGeminiEpisode(
               true,
             );
 
-      if (providerErr.kind === "empty_response" && attempt === 1) {
+      if (providerErr.kind === "empty_response") {
+        if (repairAttempts < MAX_REPAIR_ATTEMPTS && providerAttempts < MAX_PROVIDER_ATTEMPTS) {
+          repairAttempts += 1;
+          needsRepair = true;
+          lastRaw = "";
+          lastIssues = [{ path: "response", message: "Previous response was empty." }];
+          continue;
+        }
+        return mapProviderFailure(providerErr, currentMeta());
+      }
+
+      if (
+        isCapacityFallbackEligible(providerErr.kind) &&
+        !fallbackUsed &&
+        plan.fallbackModel !== null &&
+        providerAttempts < MAX_PROVIDER_ATTEMPTS
+      ) {
+        fallbackUsed = true;
+        activeModel = plan.fallbackModel;
+        needsRepair = false;
         lastRaw = "";
-        lastIssues = [{ path: "response", message: "Previous response was empty." }];
+        lastIssues = [];
         continue;
       }
 
-      return mapProviderFailure(providerErr, {
-        model,
-        attempts: attempt,
-        retries: attempt - 1,
-        latencyMs: Date.now() - startedAt,
-      });
+      return mapProviderFailure(providerErr, currentMeta());
     }
   }
 
   return failureResult(
     502,
-    "SCRIPT_VALIDATION_FAILED",
-    "Generated script could not pass Kuro episode validation after one repair attempt. Please try again or adjust your input.",
+    "SCRIPT_GENERATION_FAILED",
+    "Generated script exceeded maximum generation attempts. Please try again.",
     true,
-    {
-      model,
-      attempts: 2,
-      retries: 1,
-      latencyMs: Date.now() - startedAt,
-    },
+    currentMeta(),
   );
 }

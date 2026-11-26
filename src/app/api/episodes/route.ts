@@ -51,5 +51,18 @@ export async function POST(request: Request) {
   }
 
   const result = await generateGeminiEpisode(parsed.data);
-  return NextResponse.json(result.response, { status: result.httpStatus });
+  console.info(
+    "[kuro/episodes]",
+    JSON.stringify({
+      httpStatus: result.httpStatus,
+      ...result.meta,
+    }),
+  );
+
+  return NextResponse.json(result.response, {
+    status: result.httpStatus,
+    headers: {
+      "X-Kuro-Fallback-Used": result.meta.fallbackUsed ? "true" : "false",
+    },
+  });
 }

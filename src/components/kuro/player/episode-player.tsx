@@ -10,6 +10,7 @@ import { PodcastStage } from "@/components/kuro/player/podcast-stage";
 export interface EpisodePlayerProps {
   episode: Episode;
   source: "generated" | "mock" | "sample";
+  usedFallback?: boolean;
   requestedOptions?: {
     tone: Tone;
     length: EpisodeLength;
@@ -25,6 +26,7 @@ export interface EpisodePlayerProps {
 export function EpisodePlayer({
   episode,
   source,
+  usedFallback,
   requestedOptions,
   onBack,
 }: EpisodePlayerProps) {
@@ -77,6 +79,7 @@ export function EpisodePlayer({
 
       <PlayerNotice
         source={source}
+        usedFallback={usedFallback}
         episode={episode}
         requestedOptions={requestedOptions}
         audioAvailability={playback.audioAvailability}

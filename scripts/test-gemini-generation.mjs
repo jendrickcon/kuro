@@ -45,11 +45,21 @@ module.registerHooks({
 });
 
 const { CreateEpisodeRequestSchema, EpisodeSchema } = await import("../contracts/episode.schema.ts");
-const { classifyGeminiError, GeminiProviderError } = await import("../src/lib/episode/gemini-client.ts");
+const {
+  classifyGeminiError,
+  FALLBACK_GEMINI_TEXT_MODEL,
+  GeminiProviderError,
+  PRIMARY_GEMINI_TEXT_MODEL,
+} = await import("../src/lib/episode/gemini-client.ts");
 const { buildGeminiEpisodeJsonSchema } = await import("../src/lib/episode/gemini-prompt.ts");
 const {
   assembleEpisodeCandidate,
   generateGeminiEpisode,
+  MAX_MODEL_CHOICES,
+  MAX_MODEL_SWITCHES,
+  MAX_PROVIDER_ATTEMPTS,
+  MAX_REPAIR_ATTEMPTS,
+  resolveGeminiFallbackModel,
   resolveGeminiModel,
   resolveGenerationMode,
 } = await import("../src/lib/episode/gemini-service.ts");
@@ -125,16 +135,28 @@ check(
 // 2. Missing key fails explicitly with 503 and no silent mock fallback
 {
   const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall for exams", tone: "casual", length: "quick", hostCount: 2 });
-  const res = await generateGeminiEpisode(req, { apiKey: "" });
-  check(res.httpStatus === 503 && res.response.ok === false && res.response.error.code === "SCRIPT_GENERATION_FAILED", "missing key returns 503 SCRIPT_GENERATION_FAILED without mock fallback");
+  const res = await generateGeminiEpisode(req, { apiKey: "", env: {} });
+  check(
+    res.httpStatus === 503 &&
+      res.response.ok === false &&
+      res.response.error.code === "SCRIPT_GENERATION_FAILED" &&
+      res.meta.providerAttempts === 0 &&
+      res.meta.fallbackUsed === false,
+    "missing key returns 503 SCRIPT_GENERATION_FAILED without mock fallback",
+  );
 }
 
-// 3. Valid quick 2-host generation succeeds on attempt 1
+// 3. Primary model success -> no fallback (2-host quick & 3-host detailed)
 {
   const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall on a bus", tone: "casual", length: "quick", hostCount: 2 });
+  const modelsCalled = [];
   const res = await generateGeminiEpisode(req, {
     apiKey: "test-key",
-    transport: async () => JSON.stringify(twoHostDraft()),
+    env: {},
+    transport: async (callReq) => {
+      modelsCalled.push(callReq.model);
+      return JSON.stringify(twoHostDraft());
+    },
   });
   check(
     res.httpStatus === 200 &&
@@ -142,134 +164,392 @@ check(
       res.response.episode.status === "ready" &&
       res.response.episode.hosts.length === 2 &&
       res.response.episode.segments.length === 8 &&
-      res.meta.attempts === 1 &&
+      res.meta.requestedModel === PRIMARY_GEMINI_TEXT_MODEL &&
+      res.meta.resolvedModel === PRIMARY_GEMINI_TEXT_MODEL &&
+      res.meta.fallbackUsed === false &&
+      res.meta.providerAttempts === 1 &&
+      res.meta.repairAttempts === 0 &&
+      modelsCalled.length === 1 &&
       EpisodeSchema.safeParse(res.response.episode).success,
-    "valid quick two-host generation succeeds on first attempt",
+    "primary model success uses no fallback",
   );
-}
 
-// 4. Valid detailed 3-host generation succeeds
-{
-  const req = CreateEpisodeRequestSchema.parse({ input: "Explain spaced repetition intervals", tone: "serious", length: "detailed", hostCount: 3 });
-  const res = await generateGeminiEpisode(req, {
+  const req3 = CreateEpisodeRequestSchema.parse({ input: "Explain spaced repetition intervals", tone: "serious", length: "detailed", hostCount: 3 });
+  const res3 = await generateGeminiEpisode(req3, {
     apiKey: "test-key",
+    env: {},
     transport: async () => JSON.stringify(threeHostDraft()),
   });
   check(
-    res.httpStatus === 200 &&
-      res.response.ok &&
-      res.response.episode.hosts.length === 3 &&
-      res.response.episode.segments.length === 12 &&
-      res.response.episode.hosts[2].name === "Nadia" &&
-      EpisodeSchema.safeParse(res.response.episode).success,
+    res3.httpStatus === 200 &&
+      res3.response.ok &&
+      res3.response.episode.hosts.length === 3 &&
+      res3.response.episode.segments.length === 12 &&
+      res3.response.episode.hosts[2].name === "Nadia" &&
+      EpisodeSchema.safeParse(res3.response.episode).success,
     "valid detailed three-host generation supports custom Kuromate names and 12 turns",
   );
 }
 
-// 5. Invalid first response -> successful bounded repair (attempts === 2)
+// 4. Primary 503 -> automatic fallback to gemini-3.5-flash-lite with identical contract
 {
-  const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
-  let calls = 0;
-  const badDraft = twoHostDraft();
-  badDraft.segments[1].speakerId = "unknown_host";
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain opportunity cost cleanly", tone: "casual", length: "quick", hostCount: 2 });
+  const seenRequests = [];
   const res = await generateGeminiEpisode(req, {
     apiKey: "test-key",
+    env: {},
     transport: async (callReq) => {
-      calls += 1;
-      if (calls === 1) return JSON.stringify(badDraft);
+      seenRequests.push(callReq);
+      if (callReq.model === PRIMARY_GEMINI_TEXT_MODEL) {
+        throw classifyGeminiError({ status: 503, message: "503 service unavailable" });
+      }
+      return JSON.stringify(twoHostDraft("Fallback Opportunity Cost"));
+    },
+  });
+  const sameContract =
+    seenRequests.length === 2 &&
+    seenRequests[0].systemInstruction === seenRequests[1].systemInstruction &&
+    seenRequests[0].userPrompt === seenRequests[1].userPrompt &&
+    JSON.stringify(seenRequests[0].jsonSchema) === JSON.stringify(seenRequests[1].jsonSchema) &&
+    seenRequests[0].timeoutMs === seenRequests[1].timeoutMs;
+  check(
+    res.httpStatus === 200 &&
+      res.response.ok &&
+      res.response.episode.status === "ready" &&
+      EpisodeSchema.safeParse(res.response.episode).success &&
+      sameContract &&
+      seenRequests[0].model === PRIMARY_GEMINI_TEXT_MODEL &&
+      seenRequests[1].model === FALLBACK_GEMINI_TEXT_MODEL &&
+      res.meta.requestedModel === PRIMARY_GEMINI_TEXT_MODEL &&
+      res.meta.resolvedModel === FALLBACK_GEMINI_TEXT_MODEL &&
+      res.meta.fallbackUsed === true &&
+      res.meta.providerAttempts === 2 &&
+      res.meta.repairAttempts === 0,
+    "primary 503 switches once to gemini-3.5-flash-lite with identical contract and passes EpisodeSchema",
+  );
+}
+
+// 5. Primary 429 -> automatic fallback succeeds
+{
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain elasticity on campus", tone: "casual", length: "quick", hostCount: 2 });
+  const modelsCalled = [];
+  const res = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: {},
+    transport: async (callReq) => {
+      modelsCalled.push(callReq.model);
+      if (callReq.model === PRIMARY_GEMINI_TEXT_MODEL) {
+        throw classifyGeminiError({ status: 429, message: "rate limit" });
+      }
+      return JSON.stringify(twoHostDraft("Price Elasticity"));
+    },
+  });
+  check(
+    res.httpStatus === 200 &&
+      res.response.ok &&
+      modelsCalled.join(",") === `${PRIMARY_GEMINI_TEXT_MODEL},${FALLBACK_GEMINI_TEXT_MODEL}` &&
+      res.meta.fallbackUsed === true &&
+      res.meta.providerAttempts === 2,
+    "primary 429 switches cleanly to fallback and succeeds",
+  );
+}
+
+// 6. Primary timeout (RequestTimeoutError & RequestAbortedError) -> automatic fallback succeeds
+{
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain compound interest cleanly", tone: "casual", length: "quick", hostCount: 2 });
+  for (const errName of ["RequestTimeoutError", "RequestAbortedError"]) {
+    const modelsCalled = [];
+    const res = await generateGeminiEpisode(req, {
+      apiKey: "test-key",
+      env: {},
+      transport: async (callReq) => {
+        modelsCalled.push(callReq.model);
+        if (callReq.model === PRIMARY_GEMINI_TEXT_MODEL) {
+          const err = new Error("aborted");
+          err.name = errName;
+          throw classifyGeminiError(err);
+        }
+        return JSON.stringify(twoHostDraft("Compound Interest"));
+      },
+    });
+    check(
+      res.httpStatus === 200 &&
+        res.response.ok &&
+        modelsCalled.join(",") === `${PRIMARY_GEMINI_TEXT_MODEL},${FALLBACK_GEMINI_TEXT_MODEL}` &&
+        res.meta.fallbackUsed === true &&
+        res.meta.providerAttempts === 2,
+      `primary ${errName} switches cleanly to fallback and succeeds`,
+    );
+  }
+}
+
+// 7. Primary auth failure (401 & 403) & safety rejection -> NO fallback
+{
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
+  for (const status of [401, 403]) {
+    let calls = 0;
+    const res = await generateGeminiEpisode(req, {
+      apiKey: "bad-key",
+      env: {},
+      transport: async () => {
+        calls += 1;
+        throw classifyGeminiError({ status, message: "secret_key_details_must_not_leak" });
+      },
+    });
+    check(
+      calls === 1 &&
+        res.httpStatus === 502 &&
+        res.response.ok === false &&
+        res.response.error.code === "SCRIPT_GENERATION_FAILED" &&
+        res.response.error.retryable === false &&
+        res.meta.fallbackUsed === false &&
+        res.meta.providerAttempts === 1 &&
+        !res.response.error.message.includes("secret_key_details"),
+      `primary auth ${status} fails immediately without capacity fallback or raw text leak`,
+    );
+  }
+
+  let safetyCalls = 0;
+  const safetyRes = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: {},
+    transport: async () => {
+      safetyCalls += 1;
+      throw classifyGeminiError({ status: 400, message: "Request blocked due to SAFETY content_policy" });
+    },
+  });
+  check(
+    safetyCalls === 1 &&
+      safetyRes.httpStatus === 502 &&
+      safetyRes.response.ok === false &&
+      safetyRes.response.error.retryable === false &&
+      safetyRes.meta.fallbackUsed === false,
+    "primary safety rejection fails immediately without capacity fallback",
+  );
+}
+
+// 8. Primary schema failure follows repair behavior on primary, NEVER capacity fallback
+{
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
+  const badDraft = twoHostDraft();
+  badDraft.segments[1].speakerId = "unknown_host";
+
+  const modelsCalledSuccess = [];
+  const resFixed = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: {},
+    transport: async (callReq) => {
+      modelsCalledSuccess.push(callReq.model);
+      if (modelsCalledSuccess.length === 1) return JSON.stringify(badDraft);
       check(callReq.userPrompt.includes("unknown_host") || callReq.userPrompt.includes("Repair"), "repair prompt references prior draft issue");
       return `\`\`\`json\n${JSON.stringify(twoHostDraft())}\n\`\`\``;
     },
   });
-  check(res.httpStatus === 200 && res.response.ok && res.meta.attempts === 2 && res.meta.retries === 1, "invalid first response repairs cleanly in 1 bounded retry");
+  check(
+    resFixed.httpStatus === 200 &&
+      resFixed.response.ok &&
+      modelsCalledSuccess.every((m) => m === PRIMARY_GEMINI_TEXT_MODEL) &&
+      resFixed.meta.fallbackUsed === false &&
+      resFixed.meta.providerAttempts === 2 &&
+      resFixed.meta.repairAttempts === 1,
+    "primary schema failure repairs cleanly on primary without switching to fallback",
+  );
+
+  const modelsCalledFail = [];
+  const resStillInvalid = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: {},
+    transport: async (callReq) => {
+      modelsCalledFail.push(callReq.model);
+      return JSON.stringify(badDraft);
+    },
+  });
+  check(
+    modelsCalledFail.length === 2 &&
+      modelsCalledFail.every((m) => m === PRIMARY_GEMINI_TEXT_MODEL) &&
+      resStillInvalid.httpStatus === 502 &&
+      resStillInvalid.response.ok === false &&
+      resStillInvalid.response.error.code === "SCRIPT_VALIDATION_FAILED" &&
+      resStillInvalid.meta.fallbackUsed === false &&
+      resStillInvalid.meta.providerAttempts === 2 &&
+      resStillInvalid.meta.repairAttempts === 1,
+    "persistent primary schema failure stops after 1 repair without triggering capacity fallback",
+  );
 }
 
-// 6. Still invalid after repair -> 502 SCRIPT_VALIDATION_FAILED (capped at 2 calls)
+// 9. Primary & fallback both fail -> honest recoverable error (never silent mock)
+{
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain marginal benefit", tone: "casual", length: "quick", hostCount: 2 });
+
+  const calls503 = [];
+  const both503 = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: {},
+    transport: async (callReq) => {
+      calls503.push(callReq.model);
+      throw classifyGeminiError({ status: 503, message: "capacity spike" });
+    },
+  });
+  check(
+    calls503.length === 2 &&
+      both503.httpStatus === 502 &&
+      both503.response.ok === false &&
+      both503.response.error.code === "SCRIPT_GENERATION_FAILED" &&
+      both503.response.error.retryable === true &&
+      both503.meta.fallbackUsed === true &&
+      both503.meta.resolvedModel === FALLBACK_GEMINI_TEXT_MODEL,
+    "primary + fallback 503 returns honest recoverable 502 without mock content",
+  );
+
+  const calls429 = [];
+  const both429 = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: {},
+    transport: async (callReq) => {
+      calls429.push(callReq.model);
+      throw classifyGeminiError({ status: 429, message: "secret_token_should_not_leak" });
+    },
+  });
+  check(
+    calls429.length === 2 &&
+      both429.httpStatus === 429 &&
+      both429.response.ok === false &&
+      both429.response.error.code === "RATE_LIMITED" &&
+      both429.response.error.retryable === true &&
+      !both429.response.error.message.includes("secret_token") &&
+      both429.meta.fallbackUsed === true,
+    "primary + fallback 429 maps cleanly to 429 RATE_LIMITED without leaking raw error text",
+  );
+}
+
+// 10. Arbitrary env model IDs rejected; explicit gemini-4-hydrogen allowed ONLY as primary override
+{
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain comparative advantage", tone: "casual", length: "quick", hostCount: 2 });
+  let transportCalls = 0;
+  const countTransport = async () => {
+    transportCalls += 1;
+    return JSON.stringify(twoHostDraft());
+  };
+
+  const badPrimary = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: { GEMINI_TEXT_MODEL: "gemini-2.0-flash" },
+    transport: countTransport,
+  });
+  const badFallback = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: { GEMINI_FALLBACK_MODEL: "gemini-4-hydrogen" },
+    transport: countTransport,
+  });
+  const arbitraryFallback = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: { GEMINI_FALLBACK_MODEL: "arbitrary-unlisted-model" },
+    transport: countTransport,
+  });
+  check(
+    transportCalls === 0 &&
+      badPrimary.httpStatus === 503 &&
+      badPrimary.response.ok === false &&
+      badPrimary.response.error.retryable === false &&
+      badFallback.httpStatus === 503 &&
+      badFallback.response.ok === false &&
+      arbitraryFallback.httpStatus === 503 &&
+      arbitraryFallback.response.ok === false,
+    "arbitrary model IDs and gemini-4-hydrogen fallback override are rejected with 0 provider calls",
+  );
+
+  const explicitHydrogen = await generateGeminiEpisode(req, {
+    apiKey: "test-key",
+    env: { GEMINI_TEXT_MODEL: "gemini-4-hydrogen" },
+    transport: async (callReq) => {
+      check(callReq.model === "gemini-4-hydrogen", "explicit GEMINI_TEXT_MODEL=gemini-4-hydrogen override is honored");
+      return JSON.stringify(twoHostDraft());
+    },
+  });
+  check(
+    explicitHydrogen.httpStatus === 200 &&
+      explicitHydrogen.response.ok &&
+      explicitHydrogen.meta.resolvedModel === "gemini-4-hydrogen" &&
+      explicitHydrogen.meta.fallbackUsed === false,
+    "explicit gemini-4-hydrogen primary override succeeds without automatic fallback",
+  );
+}
+
+// 11. Empty response triggers 1 repair retry then returns 502
 {
   const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
   let calls = 0;
-  const badDraft = twoHostDraft();
-  badDraft.segments[0].speakerId = "nobody";
   const res = await generateGeminiEpisode(req, {
     apiKey: "test-key",
+    env: {},
     transport: async () => {
       calls += 1;
-      return JSON.stringify(badDraft);
+      throw new GeminiProviderError("empty_response", "Gemini returned an empty response.", true);
     },
   });
   check(
     calls === 2 &&
       res.httpStatus === 502 &&
       res.response.ok === false &&
-      res.response.error.code === "SCRIPT_VALIDATION_FAILED",
-    "persistent invalid script fails with 502 SCRIPT_VALIDATION_FAILED after max 2 attempts",
+      res.response.error.code === "SCRIPT_GENERATION_FAILED" &&
+      res.meta.fallbackUsed === false &&
+      res.meta.repairAttempts === 1,
+    "empty response retries once on same model and returns 502 SCRIPT_GENERATION_FAILED",
   );
 }
 
-// 7. Rate-limit error mapping (429 -> RATE_LIMITED)
+// 12. Maximum provider-call bound strictly capped (2 choices, 1 switch, 1 repair, max 3 calls)
 {
-  const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
+  check(
+    MAX_MODEL_CHOICES === 2 &&
+      MAX_MODEL_SWITCHES === 1 &&
+      MAX_REPAIR_ATTEMPTS === 1 &&
+      MAX_PROVIDER_ATTEMPTS === 3,
+    "exported execution cap constants equal 2 models, 1 switch, 1 repair, and 3 max provider calls",
+  );
+
+  const req = CreateEpisodeRequestSchema.parse({ input: "Explain opportunity cost in detail", tone: "casual", length: "quick", hostCount: 2 });
+  const badDraft = twoHostDraft();
+  badDraft.segments[0].speakerId = "ghost_speaker";
+
+  const modelsCalled = [];
   const res = await generateGeminiEpisode(req, {
     apiKey: "test-key",
-    transport: async () => {
-      throw classifyGeminiError({ status: 429, message: "secret_token_should_not_leak" });
+    env: {},
+    transport: async (callReq) => {
+      modelsCalled.push(callReq.model);
+      if (callReq.model === PRIMARY_GEMINI_TEXT_MODEL) {
+        throw classifyGeminiError({ status: 503, message: "overload" });
+      }
+      return JSON.stringify(badDraft);
     },
   });
   check(
-    res.httpStatus === 429 &&
+    modelsCalled.length === 3 &&
+      modelsCalled.length <= MAX_PROVIDER_ATTEMPTS &&
+      modelsCalled[0] === PRIMARY_GEMINI_TEXT_MODEL &&
+      modelsCalled[1] === FALLBACK_GEMINI_TEXT_MODEL &&
+      modelsCalled[2] === FALLBACK_GEMINI_TEXT_MODEL &&
+      res.httpStatus === 502 &&
       res.response.ok === false &&
-      res.response.error.code === "RATE_LIMITED" &&
-      !res.response.error.message.includes("secret_token"),
-    "rate limit maps cleanly to 429 RATE_LIMITED without leaking raw error text",
+      res.response.error.code === "SCRIPT_VALIDATION_FAILED" &&
+      res.meta.providerAttempts === 3 &&
+      res.meta.repairAttempts === 1 &&
+      res.meta.fallbackUsed === true,
+    "maximum provider-call bound caps primary 503 + fallback schema fail + fallback repair at 3 total calls",
   );
 }
 
-// 8. Timeout error mapping (RequestTimeoutError & RequestAbortedError -> 504 SCRIPT_GENERATION_FAILED)
-{
-  const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
-  for (const errName of ["RequestTimeoutError", "RequestAbortedError"]) {
-    const res = await generateGeminiEpisode(req, {
-      apiKey: "test-key",
-      transport: async () => {
-        const err = new Error("aborted");
-        err.name = errName;
-        throw classifyGeminiError(err);
-      },
-    });
-    check(
-      res.httpStatus === 504 &&
-        res.response.ok === false &&
-        res.response.error.code === "SCRIPT_GENERATION_FAILED",
-      `${errName} maps cleanly to 504 SCRIPT_GENERATION_FAILED`,
-    );
-  }
-}
-
-// 9. Empty response triggers retry and maps to 502 SCRIPT_GENERATION_FAILED if still empty
-{
-  const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
-  let calls = 0;
-  const res = await generateGeminiEpisode(req, {
-    apiKey: "test-key",
-    transport: async () => {
-      calls += 1;
-      throw new GeminiProviderError("empty_response", "Gemini returned an empty response.", true);
-    },
-  });
-  check(calls === 2 && res.httpStatus === 502 && res.response.ok === false && res.response.error.code === "SCRIPT_GENERATION_FAILED", "empty response retries once and returns 502 SCRIPT_GENERATION_FAILED");
-}
-
-// 10. Generation mode, model resolution, and explicit mock marking
+// 13. Generation mode, defaults, mock marking, and client isolation
 {
   check(resolveGenerationMode({}) === "live", "default generation mode is live");
   check(resolveGenerationMode({ KURO_GENERATION_MODE: "mock" }) === "mock", "explicit KURO_GENERATION_MODE=mock resolves mock");
-  check(resolveGeminiModel({}) === "gemini-4-hydrogen", "default model resolves to verified gemini-4-hydrogen");
+  check(resolveGeminiModel({}) === PRIMARY_GEMINI_TEXT_MODEL, "default primary model resolves to gemini-3.8-flash");
+  check(resolveGeminiFallbackModel({}) === FALLBACK_GEMINI_TEXT_MODEL, "default fallback model resolves to gemini-3.5-flash-lite");
+
   const mockEp = createMockEpisode(CreateEpisodeRequestSchema.parse({ input: "Opportunity cost review", tone: "casual", length: "quick", hostCount: 2 }));
   check(mockEp.status === "mock", "mock service explicitly marks episode status as mock");
-}
 
-// 11. Client isolation scan
-{
   const clientFiles = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -287,13 +567,16 @@ check(
     return (
       content.includes("GEMINI_API_KEY") ||
       content.includes("NEXT_PUBLIC_GEMINI") ||
-      content.includes("@google/genai")
+      content.includes("@google/genai") ||
+      content.includes("gemini-3.8-flash") ||
+      content.includes("gemini-3.5-flash-lite") ||
+      content.includes("gemini-4-hydrogen")
     );
   });
-  check(forbidden.length === 0, "no client component/hook references GEMINI_API_KEY, NEXT_PUBLIC_GEMINI, or @google/genai");
+  check(forbidden.length === 0, "no client component/hook exposes secrets, SDK, or exact Gemini model IDs");
 }
 
-// 12. Compact Gemini JSON schema, flat cue normalization, and hostCount enforcement
+// 14. Compact Gemini JSON schema, flat cue normalization, and hostCount enforcement
 {
   const reqThree = CreateEpisodeRequestSchema.parse({ input: "Explain inflation cleanly", tone: "serious", length: "quick", hostCount: 3 });
   const schemaText = JSON.stringify(buildGeminiEpisodeJsonSchema(reqThree));
@@ -326,6 +609,7 @@ check(
   };
   const res = await generateGeminiEpisode(reqThree, {
     apiKey: "test-key",
+    env: {},
     transport: async ({ userPrompt }) => {
       calls += 1;
       if (calls === 1) return JSON.stringify(twoHostDraft());

@@ -21,6 +21,7 @@ interface ResultState {
   instanceId: number;
   episode: Episode;
   source: "generated" | "mock" | "sample";
+  usedFallback?: boolean;
   requestedOptions?: {
     tone: Tone;
     length: EpisodeLength;
@@ -161,12 +162,14 @@ export function KuroSkeleton() {
         return;
       }
 
+      const usedFallback = response.headers.get("x-kuro-fallback-used") === "true";
       const source = episodeCheck.data.status === "ready" ? "generated" : "mock";
       episodeCounterRef.current += 1;
       setResult({
         instanceId: episodeCounterRef.current,
         episode: episodeCheck.data,
         source,
+        usedFallback: source === "generated" ? usedFallback : false,
         requestedOptions: { tone, length, hostCount },
       });
     } catch {
@@ -205,6 +208,7 @@ export function KuroSkeleton() {
         key={result.instanceId}
         episode={result.episode}
         source={result.source}
+        usedFallback={result.usedFallback}
         requestedOptions={result.requestedOptions}
         onBack={handleBackToForm}
       />

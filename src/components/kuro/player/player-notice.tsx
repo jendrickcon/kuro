@@ -3,6 +3,7 @@ import type { AudioAvailability } from "@/hooks/use-episode-playback";
 
 export interface PlayerNoticeProps {
   source: "generated" | "mock" | "sample";
+  usedFallback?: boolean;
   episode: Episode;
   requestedOptions?: {
     tone: Tone;
@@ -15,6 +16,7 @@ export interface PlayerNoticeProps {
 
 export function PlayerNotice({
   source,
+  usedFallback,
   episode,
   requestedOptions,
   audioAvailability,
@@ -40,8 +42,9 @@ export function PlayerNotice({
         </p>
       ) : source === "generated" ? (
         <p className="font-semibold">
-          Generated script by Gemini ({episode.length}, {episode.segments.length} turns) — script
-          only, hosted Kuromate voices connect later.
+          {usedFallback
+            ? `Generated using an available Gemini model. (${episode.length}, ${episode.segments.length} turns — hosted Kuromate voices connect later.)`
+            : `Generated script by Gemini (${episode.length}, ${episode.segments.length} turns) — script only, hosted Kuromate voices connect later.`}
         </p>
       ) : lengthDiffers ? (
         <p className="font-semibold">
