@@ -102,6 +102,11 @@ export function EpisodePlayer({
         source={source}
         usedFallback={usedFallback}
         usedFallbackAudio={snapshot.usedFallbackAudio}
+        primaryDailyExhausted={snapshot.primaryModelState === "daily_exhausted"}
+        allHostedDailyExhausted={snapshot.allHostedDailyExhausted}
+        hostedTtsState={snapshot.hostedTtsState}
+        episodeAudioSummaryLabel={snapshot.episodeAudioSummaryLabel}
+        currentSegmentHasAudio={snapshot.currentSegmentHasAudio}
         audioMode={snapshot.audioMode}
         episode={episode}
         requestedOptions={requestedOptions}

@@ -58,7 +58,7 @@ export function GenerationStatus({
     badgeText = "Rate limit wait";
     badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
   } else if (view.stage === "audio_unavailable") {
-    badgeText = view.isLongQuotaWait ? "Daily limit" : "Voice unavailable";
+    badgeText = view.isLongQuotaWait ? "Hosted voice limit reached" : "Voice unavailable";
     badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
   } else if (view.stage === "audio_cancelled") {
     badgeText = "Paused";
@@ -145,11 +145,15 @@ export function GenerationStatus({
         aria-live="polite"
         className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"
       >
-        <p className="text-sm font-bold text-slate-950 break-words">{view.statusText}</p>
+        <p className="text-sm font-extrabold text-slate-950 break-words">{view.stepHeading}</p>
+        <p className="mt-0.5 text-sm font-medium text-slate-800 break-words">{view.statusText}</p>
         {view.fallbackNotice ? (
-          <p className="mt-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-950">
-            {view.fallbackNotice}
-          </p>
+          <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-950">
+            {view.fallbackNoticeTitle ? (
+              <p className="font-extrabold">{view.fallbackNoticeTitle}</p>
+            ) : null}
+            <p className="font-semibold">{view.fallbackNotice}</p>
+          </div>
         ) : null}
         {view.countdownText ? (
           <p className="mt-1 text-xs font-semibold tabular-nums text-amber-900">

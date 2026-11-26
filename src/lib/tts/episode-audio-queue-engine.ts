@@ -2,6 +2,11 @@ import type { DialogueSegment, Episode, Host, HostRole } from "@contracts/episod
 import type { PlaybackStatus } from "@/hooks/use-episode-playback";
 import { getSegmentDurationMs } from "@/hooks/use-episode-playback";
 import {
+  resolveDeterministicUnknownIdentityId,
+  resolveEpisodeVoiceIdentities,
+  type KuromateIdentityProfileId,
+} from "@/lib/tts/kuromate-identity-ids";
+import {
   createEpisodeObjectUrlPool,
   type EpisodeObjectUrlPool,
   type ObjectUrlApi,
@@ -13,7 +18,11 @@ import {
   sanitizeRetryAfterSeconds,
   type TtsQuotaClass,
 } from "@/lib/tts/retry-after";
-import type { TtsErrorCode, TtsRoutePreference } from "@/lib/tts/tts-contract";
+import type {
+  HostedTtsHealthState,
+  TtsErrorCode,
+  TtsRoutePreference,
+} from "@/lib/tts/tts-contract";
 import {
   INITIAL_AUDIO_BUFFER_SIZE,
   MAX_AUTOMATIC_CAPACITY_RETRIES_PER_SEGMENT,
@@ -51,64 +60,130 @@ export const OUTAGE_CONSECUTIVE_NON_CAPACITY_ERRORS = 2;
 export const CAPACITY_RETRY_FALLBACK_COOLDOWN_MS = 2_000;
 export const DEFAULT_LONG_QUOTA_CIRCUIT_WINDOW_MS = 30 * 60 * 1000;
 
+export type TtsModelHealthState =
+  | "available"
+  | "short_cooldown"
+  | "daily_exhausted"
+  | "unavailable"
+  | "unknown";
+
 export interface TtsSessionCircuitState {
+  primaryState: TtsModelHealthState;
+  fallbackState: TtsModelHealthState;
   primaryOpen: boolean;
+  allHostedDailyExhausted: boolean;
   primaryResetAtMs: number | null;
+  allHostedResetAtMs: number | null;
   lastRetryAfterSeconds: number | null;
   quotaClass: TtsQuotaClass;
 }
 
 export interface TtsSessionCircuit {
   isPrimaryOpen: (nowMs?: number) => boolean;
+  isAllHostedDailyExhausted: (nowMs?: number) => boolean;
   openPrimary: (nowMs: number, retryAfterSeconds?: number | null) => void;
+  openAllHostedDailyExhausted: (nowMs: number, retryAfterSeconds?: number | null) => void;
+  markPrimaryAvailable: () => void;
+  markFallbackAvailable: () => void;
   reset: () => void;
   getState: (nowMs?: number) => TtsSessionCircuitState;
 }
 
 /**
- * In-memory session-level circuit breaker preventing repeated calls to a daily-quota-exhausted
- * primary TTS model across segments and episodes in the same active session.
+ * In-memory session-level circuit breaker tracking both primary and fallback hosted TTS
+ * quota health without Redis, persistent storage, or multi-hour timers.
  */
 export function createTtsSessionCircuit(): TtsSessionCircuit {
-  let primaryOpen = false;
+  let primaryState: TtsModelHealthState = "available";
+  let fallbackState: TtsModelHealthState = "available";
   let primaryResetAtMs: number | null = null;
+  let allHostedResetAtMs: number | null = null;
   let lastRetryAfterSeconds: number | null = null;
   let quotaClass: TtsQuotaClass = "none";
 
   function refreshIfExpired(nowMs: number) {
-    if (primaryOpen && primaryResetAtMs !== null && nowMs >= primaryResetAtMs) {
-      primaryOpen = false;
+    if (primaryState === "daily_exhausted" && primaryResetAtMs !== null && nowMs >= primaryResetAtMs) {
+      primaryState = "available";
       primaryResetAtMs = null;
-      lastRetryAfterSeconds = null;
-      quotaClass = "none";
+      if (fallbackState !== "daily_exhausted") {
+        lastRetryAfterSeconds = null;
+        quotaClass = "none";
+      }
+    }
+    if (fallbackState === "daily_exhausted" && allHostedResetAtMs !== null && nowMs >= allHostedResetAtMs) {
+      fallbackState = "available";
+      allHostedResetAtMs = null;
+      if (primaryState === "daily_exhausted" && (primaryResetAtMs === null || nowMs >= primaryResetAtMs)) {
+        primaryState = "available";
+        primaryResetAtMs = null;
+      }
+      if (primaryState !== "daily_exhausted") {
+        lastRetryAfterSeconds = null;
+        quotaClass = "none";
+      }
     }
   }
 
   return {
     isPrimaryOpen(nowMs = Date.now()) {
       refreshIfExpired(nowMs);
-      return primaryOpen;
+      return primaryState === "daily_exhausted";
+    },
+    isAllHostedDailyExhausted(nowMs = Date.now()) {
+      refreshIfExpired(nowMs);
+      return primaryState === "daily_exhausted" && fallbackState === "daily_exhausted";
     },
     openPrimary(nowMs, retryAfterSeconds) {
       const sanitized = sanitizeRetryAfterSeconds(retryAfterSeconds);
       const windowMs =
         sanitized !== undefined ? sanitized * 1000 : DEFAULT_LONG_QUOTA_CIRCUIT_WINDOW_MS;
-      primaryOpen = true;
+      primaryState = "daily_exhausted";
       primaryResetAtMs = nowMs + windowMs;
       lastRetryAfterSeconds = sanitized ?? null;
       quotaClass = "long_quota_wait";
     },
-    reset() {
-      primaryOpen = false;
+    openAllHostedDailyExhausted(nowMs, retryAfterSeconds) {
+      const sanitized = sanitizeRetryAfterSeconds(retryAfterSeconds);
+      const windowMs =
+        sanitized !== undefined ? sanitized * 1000 : DEFAULT_LONG_QUOTA_CIRCUIT_WINDOW_MS;
+      const resetAt = nowMs + windowMs;
+      primaryState = "daily_exhausted";
+      fallbackState = "daily_exhausted";
+      primaryResetAtMs = primaryResetAtMs !== null ? Math.max(primaryResetAtMs, resetAt) : resetAt;
+      allHostedResetAtMs = resetAt;
+      lastRetryAfterSeconds = sanitized ?? null;
+      quotaClass = "long_quota_wait";
+    },
+    markPrimaryAvailable() {
+      primaryState = "available";
       primaryResetAtMs = null;
+      if (fallbackState !== "daily_exhausted") {
+        lastRetryAfterSeconds = null;
+        quotaClass = "none";
+      }
+    },
+    markFallbackAvailable() {
+      fallbackState = "available";
+      allHostedResetAtMs = null;
+    },
+    reset() {
+      primaryState = "available";
+      fallbackState = "available";
+      primaryResetAtMs = null;
+      allHostedResetAtMs = null;
       lastRetryAfterSeconds = null;
       quotaClass = "none";
     },
     getState(nowMs = Date.now()) {
       refreshIfExpired(nowMs);
       return {
-        primaryOpen,
+        primaryState,
+        fallbackState,
+        primaryOpen: primaryState === "daily_exhausted",
+        allHostedDailyExhausted:
+          primaryState === "daily_exhausted" && fallbackState === "daily_exhausted",
         primaryResetAtMs,
+        allHostedResetAtMs,
         lastRetryAfterSeconds,
         quotaClass,
       };
@@ -201,6 +276,7 @@ export type RetryDisabledReason =
   | "generating"
   | "in_flight"
   | "limit_reached"
+  | "daily_limit"
   | "permanent";
 
 export type FetchSegmentAudioResult =
@@ -211,8 +287,10 @@ export type FetchSegmentAudioResult =
       durationMs: number | null;
       fallbackUsed?: boolean;
       quotaClass?: TtsQuotaClass;
+      hostedState?: HostedTtsHealthState;
       retryAfterHeader?: string | null;
       profileId?: string | null;
+      voiceIdentityId?: string | null;
     }
   | {
       ok: false;
@@ -222,7 +300,9 @@ export type FetchSegmentAudioResult =
       retryable: boolean;
       retryAfterHeader?: string | null;
       quotaClass?: TtsQuotaClass;
+      hostedState?: HostedTtsHealthState;
       fallbackUsed?: boolean;
+      voiceIdentityId?: string | null;
       isNetworkError?: boolean;
     };
 
@@ -230,6 +310,10 @@ export interface FetchSegmentAudioPayload {
   segmentId: string;
   speakerId: string;
   role: HostRole;
+  voiceIdentityId?: KuromateIdentityProfileId;
+  voiceId?: string;
+  avatarId?: string;
+  hostName?: string;
   text: string;
   routePreference?: TtsRoutePreference;
 }
@@ -282,6 +366,7 @@ export interface EpisodeAudioQueueDeps {
 export interface SegmentQueueEntryView {
   segmentId: string;
   speakerId: string;
+  voiceIdentityId: KuromateIdentityProfileId;
   order: number;
   cacheKey: string;
   status: SegmentQueueStatus;
@@ -341,6 +426,12 @@ export interface EpisodeAudioQueueSnapshot {
   primaryReadyCount: number;
   primaryCircuitOpen: boolean;
   longQuotaExhausted: boolean;
+  allHostedDailyExhausted: boolean;
+  primaryModelState: TtsModelHealthState;
+  fallbackModelState: TtsModelHealthState;
+  hostedTtsState: HostedTtsHealthState;
+  episodeAudioSummaryLabel: string;
+  hostIdentities: Readonly<Record<string, KuromateIdentityProfileId>>;
   audioSourceSummary: EpisodeAudioSourceSummary;
   cooldownActive: boolean;
   cooldownRemainingMs: number;
@@ -393,6 +484,7 @@ export interface EpisodeAudioQueueController {
 interface InternalSegmentEntry {
   segment: DialogueSegment;
   hostRole: HostRole | null;
+  voiceIdentityId: KuromateIdentityProfileId;
   cacheKey: string;
   status: SegmentQueueStatus;
   objectUrl: string | null;
@@ -424,8 +516,9 @@ export function buildSegmentCacheKey(
   episodeId: string,
   segment: DialogueSegment,
   hostRole: HostRole | "unknown",
+  voiceIdentityId: string = "kuromate_guest_01_v1",
 ): string {
-  return `${episodeId}:${segment.id}:${segment.speakerId}:${hostRole}:${hashTextFnv1a(segment.text)}`;
+  return `${episodeId}:${segment.id}:${segment.speakerId}:${voiceIdentityId}:${hostRole}:${hashTextFnv1a(segment.text)}`;
 }
 
 /** Builds a deterministic idle snapshot matching server/initial client hydration. */
@@ -435,6 +528,10 @@ export function buildIdleEpisodeSnapshot(
 ): EpisodeAudioQueueSnapshot {
   const orderedSegments = [...episode.segments].sort((a, b) => a.order - b.order);
   const hostsById = new Map<string, Host>(episode.hosts.map((h) => [h.id, h]));
+  const identityMap = resolveEpisodeVoiceIdentities(episode.hosts);
+  const hostIdentities: Record<string, KuromateIdentityProfileId> = Object.fromEntries(
+    identityMap.entries(),
+  );
   const currentSegment = orderedSegments[0];
   const activeSpeakerId = currentSegment?.speakerId ?? "";
   const activeHost = hostsById.get(activeSpeakerId);
@@ -479,6 +576,12 @@ export function buildIdleEpisodeSnapshot(
     primaryReadyCount: 0,
     primaryCircuitOpen: false,
     longQuotaExhausted: false,
+    allHostedDailyExhausted: false,
+    primaryModelState: "available",
+    fallbackModelState: "available",
+    hostedTtsState: "primary_available",
+    episodeAudioSummaryLabel: "Hosted audio active",
+    hostIdentities,
     audioSourceSummary: "pending",
     cooldownActive: false,
     cooldownRemainingMs: 0,
@@ -496,11 +599,15 @@ export function buildIdleEpisodeSnapshot(
     segments: orderedSegments.map((seg) => {
       const host = hostsById.get(seg.speakerId);
       const role = host?.role ?? "unknown";
+      const voiceIdentityId =
+        identityMap.get(seg.speakerId) ??
+        resolveDeterministicUnknownIdentityId(host?.name || seg.speakerId);
       return {
         segmentId: seg.id,
         speakerId: seg.speakerId,
+        voiceIdentityId,
         order: seg.order,
-        cacheKey: buildSegmentCacheKey(episode.id, seg, role),
+        cacheKey: buildSegmentCacheKey(episode.id, seg, role, voiceIdentityId),
         status: "idle",
         hasCachedAudio: false,
         audioSource: null,
@@ -627,15 +734,23 @@ export function createEpisodeAudioQueueEngine(
 
   const orderedSegments = [...episode.segments].sort((a, b) => a.order - b.order);
   const hostsById = new Map<string, Host>(episode.hosts.map((h) => [h.id, h]));
+  const identityMap = resolveEpisodeVoiceIdentities(episode.hosts);
+  const hostIdentities: Record<string, KuromateIdentityProfileId> = Object.fromEntries(
+    identityMap.entries(),
+  );
   const initialBufferTarget = Math.min(INITIAL_AUDIO_BUFFER_SIZE, orderedSegments.length);
 
   const entries: InternalSegmentEntry[] = orderedSegments.map((segment) => {
     const host = hostsById.get(segment.speakerId);
     const role = host?.role ?? null;
+    const voiceIdentityId =
+      identityMap.get(segment.speakerId) ??
+      resolveDeterministicUnknownIdentityId(host?.name || segment.speakerId);
     return {
       segment,
       hostRole: role,
-      cacheKey: buildSegmentCacheKey(episode.id, segment, role ?? "unknown"),
+      voiceIdentityId,
+      cacheKey: buildSegmentCacheKey(episode.id, segment, role ?? "unknown", voiceIdentityId),
       status: "idle",
       objectUrl: null,
       audioSource: null,
@@ -841,20 +956,28 @@ export function createEpisodeAudioQueueEngine(
   }
 
   function computeNotice(): string | null {
-    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > now();
-    if (entries[currentIndex]?.status === "failed" && notice) {
+    const currentNowMs = now();
+    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > currentNowMs;
+    const currentEntry = entries[currentIndex];
+    const hasFallbackReady = entries.some((e) => e.objectUrl !== null && e.audioSource === "fallback");
+    const isAllDailyExhausted = sessionCircuit.isAllHostedDailyExhausted(currentNowMs);
+
+    if (isAllDailyExhausted && audioMode !== "timed-fallback") {
+      return "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions.";
+    }
+    if (currentEntry?.status === "failed" && notice) {
       return notice;
     }
     if (cooldownActive && hasStartedPodcast && outageState === "none" && audioMode === "hosted") {
-      const secs = Math.max(1, Math.ceil((cooldownUntilMs - now()) / 1000));
-      return `Voice generation is briefly paused. Preparing more voices in ${secs}s.`;
+      const secs = Math.max(1, Math.ceil((cooldownUntilMs - currentNowMs) / 1000));
+      return `Voice generation is briefly paused. Resuming after cooldown in ${secs}s.`;
     }
     if (notice) {
       return notice;
     }
     const readyCount = entries.filter((e) => e.objectUrl !== null).length;
-    if (audioMode === "timed-fallback") {
-      return "Timed captions mode — hosted audio paused while captions and visuals remain active.";
+    if (audioMode === "timed-fallback" || (hasStartedPodcast && status === "playing" && !currentEntry?.objectUrl)) {
+      return "Timed captions active — captions and visuals continue without voice for this turn.";
     }
     if (!hasStartedPodcast) {
       if (audioPreparationStatus === "ready") {
@@ -868,8 +991,8 @@ export function createEpisodeAudioQueueEngine(
       return "Creating the first voices so the conversation can begin smoothly.";
     }
     if (status === "preparing") {
-      const hostName = entries[currentIndex]
-        ? hostsById.get(entries[currentIndex].segment.speakerId)?.name
+      const hostName = currentEntry
+        ? hostsById.get(currentEntry.segment.speakerId)?.name
         : undefined;
       return hostName
         ? `Preparing ${hostName}’s voice — captions advance automatically once audio plays.`
@@ -879,13 +1002,17 @@ export function createEpisodeAudioQueueEngine(
       return "Tap to continue audio — your browser paused automatic playback between turns.";
     }
     if (cooldownActive) {
-      const secs = Math.max(1, Math.ceil((cooldownUntilMs - now()) / 1000));
-      return `Voice generation is briefly paused. Preparing more voices in ${secs}s.`;
+      const secs = Math.max(1, Math.ceil((cooldownUntilMs - currentNowMs) / 1000));
+      return `Voice generation is briefly paused. Resuming after cooldown in ${secs}s.`;
     }
     if (status === "playing") {
-      return `Hosted Kuromate audio active — ${readyCount} of ${entries.length} turns ready.`;
+      return hasFallbackReady
+        ? `Alternate hosted voice active — ${readyCount} of ${entries.length} turns ready.`
+        : `Hosted audio active — ${readyCount} of ${entries.length} turns ready.`;
     }
-    return "Hosted Kuromate audio ready — press Play to hear Kuromates speak in sequence.";
+    return hasFallbackReady
+      ? "Alternate hosted voice ready — press Play to continue playback."
+      : "Hosted Kuromate audio ready — press Play to hear Kuromates speak in sequence.";
   }
 
   function isEntryManuallyRetryable(entry: InternalSegmentEntry | undefined): boolean {
@@ -893,6 +1020,9 @@ export function createEpisodeAudioQueueEngine(
       return false;
     }
     if (outageState === "config_error" || outageState === "auth_error") {
+      return false;
+    }
+    if (sessionCircuit.isAllHostedDailyExhausted(now())) {
       return false;
     }
     if (entry.status !== "failed") {
@@ -930,6 +1060,9 @@ export function createEpisodeAudioQueueEngine(
     }
     if (outageState === "config_error" || outageState === "auth_error") {
       return { allowed: false, disabled: true, disabledReason: "permanent", label: "Retry voice" };
+    }
+    if (sessionCircuit.isAllHostedDailyExhausted(now())) {
+      return { allowed: false, disabled: true, disabledReason: "daily_limit", label: "Retry voice" };
     }
     if (entry.failureClass !== null && !isRecoverableFailureClass(entry.failureClass)) {
       return { allowed: false, disabled: true, disabledReason: "permanent", label: "Retry voice" };
@@ -1031,8 +1164,37 @@ export function createEpisodeAudioQueueEngine(
     ).length;
     const usedFallbackAudio = fallbackReadyCount > 0;
     const currentNowMs = now();
-    const primaryCircuitOpen = sessionCircuit.isPrimaryOpen(currentNowMs);
-    const longQuotaExhausted = outageState === "quota_exhausted";
+    const circuitSnapshot = sessionCircuit.getState(currentNowMs);
+    const primaryCircuitOpen = circuitSnapshot.primaryOpen;
+    const allHostedDailyExhausted = circuitSnapshot.allHostedDailyExhausted;
+    const longQuotaExhausted = allHostedDailyExhausted || outageState === "quota_exhausted";
+    const failedCount = entries.filter((e) => e.status === "failed").length;
+    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > currentNowMs;
+    const cooldownRemainingMs = cooldownActive ? Math.max(0, cooldownUntilMs - currentNowMs) : 0;
+
+    let hostedTtsState: HostedTtsHealthState;
+    let episodeAudioSummaryLabel: string;
+    if (allHostedDailyExhausted || outageState === "quota_exhausted") {
+      hostedTtsState = "all_hosted_daily_exhausted";
+      episodeAudioSummaryLabel =
+        audioMode === "timed-fallback" ? "Timed captions active" : "Hosted voice limit reached";
+    } else if (audioMode === "timed-fallback") {
+      hostedTtsState = "captions_only";
+      episodeAudioSummaryLabel = "Timed captions active";
+    } else if (outageState === "config_error" || outageState === "auth_error" || outageState === "provider_outage") {
+      hostedTtsState = "hosted_unavailable";
+      episodeAudioSummaryLabel = "Timed captions active";
+    } else if (failedCount > 0 || (hasStartedPodcast && !currentEntry?.objectUrl)) {
+      hostedTtsState = usedFallbackAudio ? "fallback_active" : "partial_hosted_available";
+      episodeAudioSummaryLabel = readyCount > 0 ? "Hosted audio partially available" : "Timed captions active";
+    } else if (usedFallbackAudio || circuitSnapshot.primaryState === "daily_exhausted") {
+      hostedTtsState = "fallback_active";
+      episodeAudioSummaryLabel = "Alternate hosted voice active";
+    } else {
+      hostedTtsState = "primary_available";
+      episodeAudioSummaryLabel = "Hosted audio active";
+    }
+
     const audioSourceSummary: EpisodeAudioSourceSummary =
       audioMode === "timed-fallback"
         ? "caption-only"
@@ -1042,14 +1204,11 @@ export function createEpisodeAudioQueueEngine(
             ? "fallback"
             : primaryReadyCount > 0
               ? "primary"
-              : outageState === "quota_exhausted" ||
+              : longQuotaExhausted ||
                   outageState === "config_error" ||
                   outageState === "auth_error"
                 ? "caption-only"
                 : "pending";
-    const failedCount = entries.filter((e) => e.status === "failed").length;
-    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > currentNowMs;
-    const cooldownRemainingMs = cooldownActive ? Math.max(0, cooldownUntilMs - currentNowMs) : 0;
     const retryUi = evaluateCurrentRetryUi(currentEntry, currentIndex, cooldownActive, cooldownRemainingMs);
 
     const initialBufferReadyCount = countInitialBufferReady();
@@ -1071,6 +1230,7 @@ export function createEpisodeAudioQueueEngine(
       entries[0]?.objectUrl !== null;
     const canRetryPreparation =
       !hasStartedPodcast &&
+      !allHostedDailyExhausted &&
       outageState !== "config_error" &&
       outageState !== "auth_error" &&
       ((audioPreparationStatus === "unavailable" &&
@@ -1132,6 +1292,12 @@ export function createEpisodeAudioQueueEngine(
       primaryReadyCount,
       primaryCircuitOpen,
       longQuotaExhausted,
+      allHostedDailyExhausted,
+      primaryModelState: circuitSnapshot.primaryState,
+      fallbackModelState: circuitSnapshot.fallbackState,
+      hostedTtsState,
+      episodeAudioSummaryLabel,
+      hostIdentities,
       audioSourceSummary,
       cooldownActive,
       cooldownRemainingMs,
@@ -1149,6 +1315,7 @@ export function createEpisodeAudioQueueEngine(
       segments: entries.map((entry) => ({
         segmentId: entry.segment.id,
         speakerId: entry.segment.speakerId,
+        voiceIdentityId: entry.voiceIdentityId,
         order: entry.segment.order,
         cacheKey: entry.cacheKey,
         status: entry.status,
@@ -1681,6 +1848,12 @@ export function createEpisodeAudioQueueEngine(
       return;
     }
 
+    if (res.fallbackUsed) {
+      sessionCircuit.markFallbackAvailable();
+    } else {
+      sessionCircuit.markPrimaryAvailable();
+    }
+
     if (res.quotaClass === "long_quota_wait") {
       sessionCircuit.openPrimary(now(), parseRetryAfterRawSeconds(res.retryAfterHeader, now()));
     }
@@ -1807,12 +1980,12 @@ export function createEpisodeAudioQueueEngine(
         : null;
 
     if (quotaClassification?.quotaClass === "long_quota_wait") {
-      sessionCircuit.openPrimary(now(), quotaClassification.rawSeconds);
+      sessionCircuit.openAllHostedDailyExhausted(now(), quotaClassification.rawSeconds);
       clearCooldownTimer();
       entry.status = "failed";
       entry.errorCode = res.errorCode;
       entry.errorMessage =
-        "Hosted Kuromate voices have reached today’s limit. You can continue with timed captions.";
+        "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions.";
       entry.failureClass = "capacity";
       entry.retryable = true;
       entry.retryAfterMs = null;
@@ -1980,12 +2153,32 @@ export function createEpisodeAudioQueueEngine(
         ? "fallback"
         : undefined;
 
+    const validVoiceId =
+      typeof host.voiceId === "string" &&
+      /^(?:kuromate_(?:maya|leo|sam|guest_0[1-3])_v1|voice_provisional_[a-z]+_0[1-9])$/.test(
+        host.voiceId.trim(),
+      )
+        ? host.voiceId.trim()
+        : undefined;
+    const validAvatarId =
+      typeof host.avatarId === "string" && /^avatar_[a-zA-Z0-9_-]+$/.test(host.avatarId.trim())
+        ? host.avatarId.trim()
+        : undefined;
+    const validHostName =
+      typeof host.name === "string" && /^[a-zA-Z0-9 .'-]{1,20}$/.test(host.name.trim())
+        ? host.name.trim()
+        : undefined;
+
     void deps
       .fetchSegmentAudio(
         {
           segmentId: entry.segment.id,
           speakerId: entry.segment.speakerId,
           role: host.role,
+          voiceIdentityId: entry.voiceIdentityId,
+          ...(validVoiceId ? { voiceId: validVoiceId } : {}),
+          ...(validAvatarId ? { avatarId: validAvatarId } : {}),
+          ...(validHostName ? { hostName: validHostName } : {}),
           text: entry.segment.text.trim(),
           ...(routePreference ? { routePreference } : {}),
         },
@@ -2091,6 +2284,25 @@ export function createEpisodeAudioQueueEngine(
       emit();
       return;
     }
+    if (sessionCircuit.isAllHostedDailyExhausted(now())) {
+      outageState = "quota_exhausted";
+      for (const item of entries) {
+        if (item.objectUrl === null && item.status === "idle") {
+          item.status = "failed";
+          item.failureClass = "capacity";
+          item.retryable = true;
+          item.errorCode = "TTS_RATE_LIMITED";
+          item.errorMessage =
+            "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions.";
+        }
+      }
+      audioPreparationStatus = entries[0]?.objectUrl !== null ? "partial" : "unavailable";
+      notice =
+        "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions.";
+      setAnnouncement("Hosted voice limit reached for today.");
+      emit();
+      return;
+    }
     if (audioPreparationStatus === "cancelled") {
       return;
     }
@@ -2126,6 +2338,7 @@ export function createEpisodeAudioQueueEngine(
   function retryPreparation() {
     if (disposed || hasStartedPodcast || entries.length === 0) return;
     if (outageState === "config_error" || outageState === "auth_error") return;
+    if (sessionCircuit.isAllHostedDailyExhausted(now())) return;
     if (cooldownTimer !== null && cooldownUntilMs > now()) return;
 
     outageState = "none";
@@ -2362,7 +2575,9 @@ export function createEpisodeAudioQueueEngine(
     const isPermanentEpisodeOutage =
       outageState === "config_error" || outageState === "auth_error";
     const skipUnfetchedRetriesOnReplay =
-      isPermanentEpisodeOutage || outageState === "quota_exhausted";
+      isPermanentEpisodeOutage ||
+      outageState === "quota_exhausted" ||
+      sessionCircuit.isAllHostedDailyExhausted(now());
     const cooldownElapsed = cooldownTimer === null || cooldownUntilMs <= now();
 
     if (!isPermanentEpisodeOutage) {
@@ -2491,6 +2706,9 @@ export function createEpisodeAudioQueueEngine(
   function retryHostedAudio() {
     if (disposed) return;
     if (outageState === "config_error" || outageState === "auth_error") {
+      return;
+    }
+    if (sessionCircuit.isAllHostedDailyExhausted(now())) {
       return;
     }
     if (cooldownTimer !== null && cooldownUntilMs > now()) {

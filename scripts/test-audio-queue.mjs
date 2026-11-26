@@ -47,6 +47,7 @@ module.registerHooks({
 
 const { deriveUnifiedLoadingView } = await import("../src/lib/episode/unified-loading-state.ts");
 const {
+  buildSegmentCacheKey,
   createEpisodeAudioQueueEngine,
   createTtsSessionCircuit,
   INITIAL_AUDIO_BUFFER_SIZE,
@@ -870,7 +871,7 @@ function createHarness(episode = makeTestEpisode(8), opts = {}) {
       h.controller.getSnapshot().primaryCircuitOpen === true &&
       h.controller.getSnapshot().usedFallbackAudio === true &&
       vDuringPrep.fallbackNotice ===
-        "Primary hosted voices were busy, so Kuro prepared an available Kuromate voice.",
+        "Kuro’s primary hosted voice reached today’s limit, so an available Kuromate voice is being used.",
     "[WP-011.5 Queue 01a] Turn 1 fallback opens session circuit and sets loading panel disclosure",
   );
 
@@ -993,16 +994,92 @@ function createHarness(episode = makeTestEpisode(8), opts = {}) {
     "[WP-011.5 Queue 08b] Explicit timed captions playback starts cleanly when both models hit daily quota",
   );
 
-  // Manual retry on a failed turn while circuit is open includes routePreference: "fallback"
+  // Both models exhausted opens allHostedDailyExhausted circuit and blocks manual & new-episode retry calls
+  const countBeforeManualBlocked = h.requests.length;
   h.controller.retryHostedAudio();
+  h.controller.retryCurrentSegment();
   await flushMicrotasks();
-  await h.advance(1600);
-  const manualReq = h.requests[h.requests.length - 1];
+  await h.advance(2000);
+  const epBlockedNext = makeTestEpisode(2);
+  const hBlockedNext = createHarness(epBlockedNext, { sessionCircuit: sharedCircuit });
+  hBlockedNext.controller.startPreparation();
+  await flushMicrotasks();
+  const snapBlockedNext = hBlockedNext.controller.getSnapshot();
   check(
-    manualReq.payload.routePreference === "fallback",
-    "[WP-011.5 Queue 09] Manual Retry respects open session circuit state",
+    h.requests.length === countBeforeManualBlocked &&
+      snapExhausted.allHostedDailyExhausted === true &&
+      snapExhausted.hostedTtsState === "all_hosted_daily_exhausted" &&
+      viewExhausted.stepHeading === "Hosted voice limit reached for today" &&
+      viewExhausted.canRetryAudio === false &&
+      hBlockedNext.requests.length === 0 &&
+      snapBlockedNext.allHostedDailyExhausted === true &&
+      snapBlockedNext.episodeAudioSummaryLabel === "Hosted voice limit reached" &&
+      !String(snapBlockedNext.notice ?? "").includes("synchronized Kuromate audio active"),
+    "[WP-011.5 Queue 09a] All-hosted daily exhaustion blocks redundant retries & second-episode provider calls with cohesive notices",
   );
   h.controller.dispose();
+  hBlockedNext.controller.dispose();
+
+  // Primary-only circuit open (fallback still available) lets manual retry route to fallback
+  const primaryOnlyCircuit = createTtsSessionCircuit();
+  primaryOnlyCircuit.openPrimary(1_700_000_000_000, 68036);
+  const hPrimaryOnly = createHarness(makeTestEpisode(2), { sessionCircuit: primaryOnlyCircuit });
+  hPrimaryOnly.controller.startPreparation();
+  await flushMicrotasks();
+  const reqPrimaryOnly = hPrimaryOnly.requests[0];
+  primaryOnlyCircuit.reset();
+  hPrimaryOnly.controller.dispose();
+
+  // Circuit clears after daily reset window elapses
+  sharedCircuit.openAllHostedDailyExhausted(1_700_000_000_000, 600);
+  check(
+    reqPrimaryOnly.payload.routePreference === "fallback" &&
+      sharedCircuit.isAllHostedDailyExhausted(1_700_000_000_000) === true &&
+      sharedCircuit.isAllHostedDailyExhausted(1_700_000_000_000 + 601_000) === false,
+    "[WP-011.5 Queue 09b] Primary-only circuit routes manual/new attempts to fallback and daily circuit resets cleanly after expiry",
+  );
+}
+
+// Queue 16: Queue attaches stable voiceIdentityId on swapped-role hosts and isolates cache key
+{
+  const swappedEp = {
+    id: "ep_swapped_roles_q16",
+    title: "Swapped Roles",
+    topic: "Margins",
+    tone: "casual",
+    length: "quick",
+    status: "ready",
+    createdAt: "2026-11-26T00:00:00Z",
+    hosts: [
+      { id: "h_leo", name: "Leo", role: "explainer", voiceId: "kuromate_leo_v1", accentColor: "#2563EB", avatarId: "avatar_explainer_01" },
+      { id: "h_maya", name: "Maya", role: "learner", voiceId: "kuromate_maya_v1", accentColor: "#D97706", avatarId: "avatar_learner_02" },
+    ],
+    segments: [
+      { id: "seg_01", order: 0, speakerId: "h_leo", text: "Leo turn one.", emotion: "explaining", visualCue: { type: "none" } },
+      { id: "seg_02", order: 1, speakerId: "h_maya", text: "Maya turn two.", emotion: "curious", visualCue: { type: "none" } },
+    ],
+  };
+  const hSwap = createHarness(swappedEp);
+  hSwap.controller.startPreparation();
+  await flushMicrotasks();
+  hSwap.resolveSegment("seg_01", { ok: true, blob: new Blob(["leo"]), contentType: "audio/wav", durationMs: 1400, fallbackUsed: false });
+  await hSwap.advance(1600);
+  hSwap.resolveSegment("seg_02", { ok: true, blob: new Blob(["maya"]), contentType: "audio/wav", durationMs: 1400, fallbackUsed: false });
+  await flushMicrotasks();
+  const snapSwap = hSwap.controller.getSnapshot();
+  check(
+    hSwap.requests.length === 2 &&
+      hSwap.requests[0].payload.voiceIdentityId === "kuromate_leo_v1" &&
+      hSwap.requests[0].payload.role === "explainer" &&
+      hSwap.requests[1].payload.voiceIdentityId === "kuromate_maya_v1" &&
+      hSwap.requests[1].payload.role === "learner" &&
+      snapSwap.hostIdentities.h_leo === "kuromate_leo_v1" &&
+      snapSwap.hostIdentities.h_maya === "kuromate_maya_v1" &&
+      buildSegmentCacheKey("ep", swappedEp.segments[0], "explainer", "kuromate_leo_v1") !==
+        buildSegmentCacheKey("ep", swappedEp.segments[0], "explainer", "kuromate_maya_v1"),
+    "[WP-011.5 Queue 16] Queue passes stable host voiceIdentityId independently of swapped role and isolates cache keys",
+  );
+  hSwap.controller.dispose();
 }
 
 // Queue 7 & 12: Mixed primary/fallback synchronization + short-cooldown retry routes to fallback (no call multiplication)

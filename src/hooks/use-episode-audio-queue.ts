@@ -1,7 +1,15 @@
-"use client";
-
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { Episode } from "@contracts/episode.schema";
+import {
+  resolveEpisodeVoiceIdentities,
+  type KuromateIdentityProfileId,
+} from "@/lib/tts/kuromate-identity-ids";
+import { parseQuotaClassHeader } from "@/lib/tts/retry-after";
+import {
+  HostedTtsHealthStateSchema,
+  TtsErrorCodeSchema,
+  TtsQuotaClassSchema,
+  type HostedTtsHealthState,
+  type TtsErrorCode,
+} from "@/lib/tts/tts-contract";
 import {
   buildIdleEpisodeSnapshot,
   createEpisodeAudioQueueEngine,
@@ -14,8 +22,8 @@ import {
   type FetchSegmentAudioPayload,
   type FetchSegmentAudioResult,
 } from "@/lib/tts/episode-audio-queue-engine";
-import { parseQuotaClassHeader } from "@/lib/tts/retry-after";
-import { TtsErrorCodeSchema, TtsQuotaClassSchema, type TtsErrorCode } from "@/lib/tts/tts-contract";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Episode } from "@contracts/episode.schema";
 
 interface TtsErrorEnvelope {
   error?: {
@@ -23,6 +31,7 @@ interface TtsErrorEnvelope {
     message?: unknown;
     retryable?: unknown;
     quotaClass?: unknown;
+    hostedState?: unknown;
   };
 }
 
@@ -31,6 +40,11 @@ function readDurationHeaderMs(response: Response): number | null {
   if (!raw) return null;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseHostedStateHeader(value: string | null | undefined): HostedTtsHealthState | undefined {
+  const parsed = HostedTtsHealthStateSchema.safeParse(value?.trim());
+  return parsed.success ? parsed.data : undefined;
 }
 
 async function fetchBrowserSegmentAudio(
@@ -53,6 +67,8 @@ async function fetchBrowserSegmentAudio(
       response.headers.get("X-Kuro-TTS-Retry-After") ?? response.headers.get("Retry-After");
     const profileId =
       response.headers.get("X-Kuro-TTS-Profile") ?? response.headers.get("X-Kuro-Profile-Id");
+    const voiceIdentityId = response.headers.get("X-Kuro-TTS-Identity");
+    let hostedState = parseHostedStateHeader(response.headers.get("X-Kuro-TTS-Hosted-State"));
 
     if (!response.ok) {
       let errorCode: TtsErrorCode =
@@ -81,6 +97,10 @@ async function fetchBrowserSegmentAudio(
         if (parsedQuota.success && parsedQuota.data !== "none") {
           quotaClass = parsedQuota.data;
         }
+        const parsedState = HostedTtsHealthStateSchema.safeParse(json?.error?.hostedState);
+        if (parsedState.success) {
+          hostedState = parsedState.data;
+        }
       } catch {
         // Keep safe generic fallback message when response body is unreadable.
       }
@@ -93,7 +113,9 @@ async function fetchBrowserSegmentAudio(
         retryable,
         retryAfterHeader,
         quotaClass,
+        hostedState,
         fallbackUsed,
+        voiceIdentityId,
       };
     }
 
@@ -127,8 +149,10 @@ async function fetchBrowserSegmentAudio(
       durationMs,
       fallbackUsed,
       quotaClass: headerQuotaClass,
+      hostedState,
       retryAfterHeader,
       profileId,
+      voiceIdentityId,
     };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
@@ -379,6 +403,7 @@ function createBrowserAudioDriver(): AudioDriver {
 
 export interface EpisodeAudioQueueHookResult {
   snapshot: EpisodeAudioQueueSnapshot | null;
+  hostIdentities: Readonly<Record<string, KuromateIdentityProfileId>>;
   startPreparation: () => void;
   cancelPreparation: () => void;
   startPodcast: () => void;
@@ -449,6 +474,12 @@ export function useEpisodeAudioQueue(
       : state.episode === episode
         ? state.snapshot
         : buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs });
+
+  const hostIdentities =
+    snapshot?.hostIdentities ??
+    (episode
+      ? Object.fromEntries(resolveEpisodeVoiceIdentities(episode.hosts).entries())
+      : {});
 
   const cooldownActive = snapshot?.cooldownActive ?? false;
 
@@ -534,6 +565,7 @@ export function useEpisodeAudioQueue(
 
   return {
     snapshot,
+    hostIdentities,
     startPreparation,
     cancelPreparation,
     startPodcast,

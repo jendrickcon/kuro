@@ -17,16 +17,21 @@ import {
   type AllowedGeminiTtsModel,
   type GeminiTtsTransport,
 } from "@/lib/tts/gemini-tts-client";
+import type { KuromateIdentityProfileId } from "@/lib/tts/kuromate-identity-ids";
 import type { TtsQuotaClass } from "@/lib/tts/retry-after";
 import {
   GenerateTtsFailureSchema,
   TTS_MAX_AUDIO_BYTES,
   type GenerateTtsFailure,
   type GenerateTtsRequest,
+  type HostedTtsHealthState,
   type TtsErrorCode,
   type TtsRoutePreference,
 } from "@/lib/tts/tts-contract";
-import { resolveKuromateVoiceProfile, type KuromateVoiceProfile } from "@/lib/tts/voice-profiles";
+import {
+  resolveKuromateSynthesisProfile,
+  type ResolvedKuromateTtsProfile,
+} from "@/lib/tts/voice-profiles";
 
 /** Primary Gemini Flash TTS plus one allowlisted Gemini Flash-Lite TTS fallback. */
 export const MAX_TTS_MODEL_CHOICES = 2;
@@ -46,6 +51,7 @@ export interface GenerateSegmentTtsMeta {
   segmentId: string;
   speakerId: string;
   profileId: string;
+  identityProfileId: KuromateIdentityProfileId;
   requestedModel: string;
   resolvedModel: string;
   routePreference: TtsRoutePreference;
@@ -54,6 +60,7 @@ export interface GenerateSegmentTtsMeta {
   providerAttempts: number;
   sdkRetryDisabled: true;
   quotaClass: TtsQuotaClass;
+  hostedState: HostedTtsHealthState;
   retryAfterSeconds?: number;
   latencyMs: number;
   byteLength?: number;
@@ -68,7 +75,7 @@ export type GenerateSegmentTtsResult =
       httpStatus: 200;
       audioBytes: Buffer;
       audio: InspectedAudioResult;
-      profile: KuromateVoiceProfile;
+      profile: ResolvedKuromateTtsProfile;
       meta: GenerateSegmentTtsMeta;
     }
   | {
@@ -110,7 +117,9 @@ export function resolveGeminiTtsModel(
 export function resolveGeminiTtsFallbackModel(
   env: Record<string, string | undefined> = process.env,
   explicitOverride?: string | null,
-): { configured: true; model: AllowedGeminiTtsFallbackModel | null } | { configured: false; invalidModel: string } {
+):
+  | { configured: true; model: AllowedGeminiTtsFallbackModel | null }
+  | { configured: false; invalidModel: string } {
   if (explicitOverride === null) {
     return { configured: true, model: null };
   }
@@ -146,6 +155,7 @@ function buildFailureResult(
       message,
       retryable,
       ...(meta.quotaClass !== "none" ? { quotaClass: meta.quotaClass } : {}),
+      hostedState: meta.hostedState,
     },
   });
   return {
@@ -161,13 +171,20 @@ function mapProviderFailure(
   error: GeminiTtsError,
   meta: GenerateSegmentTtsMeta,
   resolvedQuotaClass: TtsQuotaClass,
+  resolvedHostedState: HostedTtsHealthState,
   resolvedRetryAfterSeconds?: number,
 ): GenerateSegmentTtsResult {
   const enrichedMeta: GenerateSegmentTtsMeta = {
     ...meta,
     quotaClass: resolvedQuotaClass,
+    hostedState: resolvedHostedState,
     ...(resolvedRetryAfterSeconds !== undefined ? { retryAfterSeconds: resolvedRetryAfterSeconds } : {}),
   };
+
+  const finalMessage =
+    resolvedHostedState === "all_hosted_daily_exhausted"
+      ? "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions."
+      : error.message;
 
   switch (error.kind) {
     case "missing_key":
@@ -177,7 +194,7 @@ function mapProviderFailure(
       return buildFailureResult(
         429,
         "TTS_RATE_LIMITED",
-        error.message,
+        finalMessage,
         true,
         enrichedMeta,
         resolvedRetryAfterSeconds,
@@ -242,7 +259,10 @@ function mapInspectionError(err: AudioInspectionError): { error: GeminiTtsError;
   }
 }
 
-/** Generates, inspects, and validates hosted Gemini audio for one dialogue segment with bounded 1-switch fallback. */
+/**
+ * Generates, inspects, and validates hosted Gemini audio for one dialogue segment
+ * using identity-locked Kuromate base voices, role-based style, and bounded 1-switch fallback.
+ */
 export async function generateSegmentTts(
   request: GenerateTtsRequest,
   options: GenerateSegmentTtsOptions = {},
@@ -254,7 +274,15 @@ export async function generateSegmentTts(
   const routePreference: TtsRoutePreference = request.routePreference ?? "primary";
   const timeoutMs = options.timeoutMs ?? GEMINI_TTS_TIMEOUT_MS;
   const maxAudioBytes = options.maxAudioBytes ?? TTS_MAX_AUDIO_BYTES;
-  const profile = resolveKuromateVoiceProfile(request.role);
+
+  const profile = resolveKuromateSynthesisProfile({
+    voiceIdentityId: request.voiceIdentityId,
+    voiceId: request.voiceId,
+    avatarId: request.avatarId,
+    speakerId: request.speakerId,
+    hostName: request.hostName,
+    role: request.role,
+  });
 
   const makeMeta = (
     providerAttempts: number,
@@ -262,11 +290,13 @@ export async function generateSegmentTts(
     fallbackUsed: boolean,
     modelSwitches: number,
     quotaClass: TtsQuotaClass,
+    hostedState: HostedTtsHealthState,
     retryAfterSeconds?: number,
   ): GenerateSegmentTtsMeta => ({
     segmentId: request.segmentId,
     speakerId: request.speakerId,
     profileId: profile.profileId,
+    identityProfileId: profile.identityProfileId,
     requestedModel,
     resolvedModel,
     routePreference,
@@ -275,6 +305,7 @@ export async function generateSegmentTts(
     providerAttempts,
     sdkRetryDisabled: true,
     quotaClass,
+    hostedState,
     ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     latencyMs: Date.now() - startedAt,
   });
@@ -285,7 +316,7 @@ export async function generateSegmentTts(
       "TTS_NOT_CONFIGURED",
       "Configured Kuromate voice model is not supported on this server. Captions remain active.",
       false,
-      makeMeta(0, requestedModel, false, 0, "none"),
+      makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
     );
   }
 
@@ -295,21 +326,22 @@ export async function generateSegmentTts(
       "TTS_NOT_CONFIGURED",
       "Configured Kuromate fallback voice model is not supported on this server. Captions remain active.",
       false,
-      makeMeta(0, requestedModel, false, 0, "none"),
+      makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
     );
   }
 
   const distinctFallbackModel =
     fallbackConfig.model && fallbackConfig.model !== requestedModel ? fallbackConfig.model : null;
 
-  const apiKey = options.apiKey !== undefined ? options.apiKey.trim() : (env.GEMINI_API_KEY?.trim() ?? "");
+  const apiKey =
+    options.apiKey !== undefined ? options.apiKey.trim() : (env.GEMINI_API_KEY?.trim() ?? "");
   if (!apiKey) {
     return buildFailureResult(
       503,
       "TTS_NOT_CONFIGURED",
       "Hosted Kuromate voice preview is not configured on this server. Captions remain active.",
       false,
-      makeMeta(0, requestedModel, false, 0, "none"),
+      makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
     );
   }
 
@@ -319,7 +351,7 @@ export async function generateSegmentTts(
       "TTS_GENERATION_FAILED",
       "Voice preview request was cancelled.",
       false,
-      makeMeta(0, requestedModel, false, 0, "none"),
+      makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
     );
   }
 
@@ -328,10 +360,15 @@ export async function generateSegmentTts(
     transport = options.transport ?? createGeminiTtsTransport(apiKey);
   } catch (err) {
     const providerErr = classifyGeminiTtsError(err);
+    const errState: HostedTtsHealthState =
+      providerErr.quotaClass === "long_quota_wait"
+        ? "all_hosted_daily_exhausted"
+        : "hosted_unavailable";
     return mapProviderFailure(
       providerErr,
-      makeMeta(0, requestedModel, false, 0, providerErr.quotaClass),
+      makeMeta(0, requestedModel, false, 0, providerErr.quotaClass, errState),
       providerErr.quotaClass,
+      errState,
       providerErr.retryAfterSeconds,
     );
   }
@@ -348,11 +385,14 @@ export async function generateSegmentTts(
   while (providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS) {
     providerAttempts += 1;
 
+    const voiceForAttempt =
+      activeModel === requestedModel ? profile.voice : profile.fallbackVoice;
+
     try {
       const rawAudio = await transport({
         model: activeModel,
         text: request.text,
-        voice: profile.voice,
+        voice: voiceForAttempt,
         styleInstruction: profile.styleInstruction,
         timeoutMs,
         signal: options.signal,
@@ -381,14 +421,20 @@ export async function generateSegmentTts(
               fallbackUsed,
               modelSwitches,
               primaryQuotaClass,
+              "hosted_unavailable",
               primaryRetryAfterSeconds,
             ),
             primaryQuotaClass,
+            "hosted_unavailable",
             primaryRetryAfterSeconds,
           );
         }
         throw inspectErr;
       }
+
+      const successHostedState: HostedTtsHealthState = fallbackUsed
+        ? "fallback_active"
+        : "primary_available";
 
       return {
         ok: true,
@@ -403,6 +449,7 @@ export async function generateSegmentTts(
             fallbackUsed,
             modelSwitches,
             primaryQuotaClass,
+            successHostedState,
             primaryRetryAfterSeconds,
           ),
           byteLength: inspected.metadata.byteLength,
@@ -450,6 +497,13 @@ export async function generateSegmentTts(
         providerErr.retryAfterSeconds ??
         (providerErr.kind === "rate_limited" ? undefined : primaryRetryAfterSeconds);
 
+      const fallbackAlsoChecked =
+        routedDirectlyToFallback || modelSwitches > 0 || distinctFallbackModel === null;
+      const finalHostedState: HostedTtsHealthState =
+        fallbackAlsoChecked && providerErr.quotaClass === "long_quota_wait"
+          ? "all_hosted_daily_exhausted"
+          : "hosted_unavailable";
+
       return mapProviderFailure(
         providerErr,
         makeMeta(
@@ -458,9 +512,11 @@ export async function generateSegmentTts(
           fallbackUsed,
           modelSwitches,
           finalQuotaClass,
+          finalHostedState,
           finalRetryAfterSeconds,
         ),
         finalQuotaClass,
+        finalHostedState,
         finalRetryAfterSeconds,
       );
     }
@@ -477,6 +533,7 @@ export async function generateSegmentTts(
       fallbackUsed,
       modelSwitches,
       primaryQuotaClass,
+      "hosted_unavailable",
       primaryRetryAfterSeconds,
     ),
   );

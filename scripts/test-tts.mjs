@@ -46,9 +46,21 @@ module.registerHooks({
 
 const { HostRoleSchema } = await import("../contracts/episode.schema.ts");
 const { decodeAndInspectTtsAudio } = await import("../src/lib/tts/audio-inspect.ts");
-const { createEpisodeAudioQueueEngine, createTtsSessionCircuit } = await import(
-  "../src/lib/tts/episode-audio-queue-engine.ts"
-);
+const {
+  buildSegmentCacheKey,
+  createEpisodeAudioQueueEngine,
+  createTtsSessionCircuit,
+} = await import("../src/lib/tts/episode-audio-queue-engine.ts");
+const { assembleEpisodeCandidate } = await import("../src/lib/episode/gemini-service.ts");
+const {
+  resolveCanonicalIdentityId,
+  resolveDeterministicUnknownIdentityId,
+  resolveEpisodeVoiceIdentities,
+} = await import("../src/lib/tts/kuromate-identity-ids.ts");
+const {
+  KUROMATE_IDENTITY_PROFILES,
+  resolveKuromateIdentityProfile,
+} = await import("../src/lib/tts/kuromate-voice-identities.ts");
 const {
   ALLOWED_GEMINI_TTS_FALLBACK_MODELS,
   ALLOWED_GEMINI_TTS_MODELS,
@@ -80,6 +92,7 @@ const {
 const { handleTtsPost } = await import("../src/lib/tts/tts-route-handler.ts");
 const {
   KUROMATE_VOICE_PROFILES,
+  resolveKuromateSynthesisProfile,
   resolveKuromateVoiceProfile,
 } = await import("../src/lib/tts/voice-profiles.ts");
 
@@ -1178,13 +1191,19 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
     );
   }
 
-  // Also scan additional client-imported helper files for model/secret leaks
+  // Also scan additional client-imported helper & UI files for model/voice/secret leaks
   {
+    const prebuiltVoices = ["sulafat", "puck", "kore", "achird", "sadaltager", "erinome"];
     const extraClientFiles = [
+      path.join(root, "src/lib/tts/kuromate-identity-ids.ts"),
       path.join(root, "src/lib/tts/retry-after.ts"),
       path.join(root, "src/lib/tts/tts-contract.ts"),
       path.join(root, "src/lib/tts/episode-audio-queue-engine.ts"),
+      path.join(root, "src/hooks/use-episode-audio-queue.ts"),
       path.join(root, "src/lib/episode/unified-loading-state.ts"),
+      path.join(root, "src/components/kuro/generation-status.tsx"),
+      path.join(root, "src/components/kuro/player/player-notice.tsx"),
+      path.join(root, "src/components/kuro/player/audio-status-bar.tsx"),
     ];
     const leaked = extraClientFiles.filter((filePath) => {
       const lower = fs.readFileSync(filePath, "utf8").toLowerCase();
@@ -1192,12 +1211,229 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
         lower.includes(PRIMARY_GEMINI_TTS_MODEL) ||
         lower.includes(LITE_GEMINI_TTS_MODEL) ||
         lower.includes("gemini_api_key") ||
-        lower.includes("@google/genai")
+        lower.includes("@google/genai") ||
+        prebuiltVoices.some((voiceName) => new RegExp(`\\b${voiceName}\\b`, "i").test(lower))
       );
     });
     check(
       leaked.length === 0,
-      "[WP-011.5 TTS 25b] All client-imported TTS queue/state files exclude Gemini model IDs, SDK, and secrets",
+      `[WP-011.5 TTS 25b] Client TTS modules exclude Gemini model IDs, prebuilt voice names, SDK, and secrets (leaked=${leaked.length})`,
+    );
+  }
+
+  // =========================================================================
+  // IDENTITY-STABILIZATION & DUAL-QUOTA HARDENING TESTS
+  // =========================================================================
+
+  // ID-01..03: Canonical Kuromates retain fixed approved voices across arbitrary role swaps
+  {
+    const mayaRoles = ["explainer", "learner", "moderator"];
+    const leoRoles = ["learner", "explainer", "skeptic"];
+    const samRoles = ["skeptic", "learner", "explainer"];
+
+    const mayaVoices = mayaRoles.map((role) =>
+      resolveKuromateSynthesisProfile({ speakerId: "host_maya", hostName: "Maya", role }),
+    );
+    const leoVoices = leoRoles.map((role) =>
+      resolveKuromateSynthesisProfile({ speakerId: "host_leo", hostName: "Leo", role }),
+    );
+    const samVoices = samRoles.map((role) =>
+      resolveKuromateSynthesisProfile({ speakerId: "host_sam", hostName: "Sam", role }),
+    );
+
+    check(
+      mayaVoices.every((p) => p.identityProfileId === "kuromate_maya_v1" && p.voice === "Sulafat" && p.fallbackVoice === "Sulafat") &&
+        mayaVoices[0].profileId === "kuromate_explainer_v1" &&
+        mayaVoices[1].profileId === "kuromate_learner_v1" &&
+        mayaVoices[1].styleInstruction !== mayaVoices[0].styleInstruction,
+      "[ID 01] Maya always retains Sulafat across explainer/learner/moderator roles while role changes delivery style",
+    );
+    check(
+      leoVoices.every((p) => p.identityProfileId === "kuromate_leo_v1" && p.voice === "Puck" && p.fallbackVoice === "Puck") &&
+        leoVoices[1].profileId === "kuromate_explainer_v1",
+      "[ID 02] Leo always retains Puck even when assigned Explainer role",
+    );
+    check(
+      samVoices.every((p) => p.identityProfileId === "kuromate_sam_v1" && p.voice === "Kore" && p.fallbackVoice === "Kore") &&
+        samVoices[2].profileId === "kuromate_explainer_v1",
+      "[ID 03] Sam always retains Kore across Skeptic/Learner/Explainer roles",
+    );
+  }
+
+  // ID-04..05: assembleEpisodeCandidate locks Maya/Leo voices on swapped roles & gives unique deterministic guest IDs
+  {
+    const swappedCandidate = assembleEpisodeCandidate(
+      {
+        title: "Tradeoffs When Roles Swap",
+        hosts: [
+          { id: "host_01", name: "Leo", role: "explainer" },
+          { id: "host_02", name: "Maya", role: "learner" },
+        ],
+        segments: [
+          { id: "seg_01", order: 0, speakerId: "host_01", text: "Let me explain first.", emotion: "explaining", visualCue: { type: "none" } },
+          { id: "seg_02", order: 1, speakerId: "host_02", text: "Wait, why does that happen?", emotion: "curious", visualCue: { type: "none" } },
+        ],
+      },
+      { input: "Opportunity cost", tone: "casual", length: "quick", hostCount: 2 },
+    );
+    const swappedHosts = swappedCandidate?.hosts ?? [];
+    check(
+      swappedHosts.length === 2 &&
+        swappedHosts[0].voiceId === "kuromate_leo_v1" &&
+        swappedHosts[1].voiceId === "kuromate_maya_v1",
+      "[ID 04] assembleEpisodeCandidate assigns kuromate_leo_v1 to Leo(explainer) and kuromate_maya_v1 to Maya(learner)",
+    );
+
+    const unknownHostsA = resolveEpisodeVoiceIdentities([
+      { id: "h_1", name: "Priya" },
+      { id: "h_2", name: "Mateo" },
+      { id: "h_3", name: "Hana" },
+    ]);
+    const unknownHostsB = resolveEpisodeVoiceIdentities([
+      { id: "h_1", name: "Priya" },
+      { id: "h_2", name: "Mateo" },
+      { id: "h_3", name: "Hana" },
+    ]);
+    const assignedA = [unknownHostsA.get("h_1"), unknownHostsA.get("h_2"), unknownHostsA.get("h_3")];
+    const assignedB = [unknownHostsB.get("h_1"), unknownHostsB.get("h_2"), unknownHostsB.get("h_3")];
+    check(
+      new Set(assignedA).size === 3 &&
+        assignedA.every((id, i) => id && id === assignedB[i]) &&
+        resolveCanonicalIdentityId({ voiceId: "voice_provisional_explainer_01", hostName: "Leo" }) === "kuromate_leo_v1" &&
+        Boolean(resolveDeterministicUnknownIdentityId("Priya")) &&
+        Boolean(KUROMATE_IDENTITY_PROFILES.kuromate_guest_01_v1),
+      "[ID 05] 3 unknown hosts receive deterministic collision-safe guest voices and provisional voiceId defers to hostName",
+    );
+  }
+
+  // ID-06..07: GenerateTtsRequestSchema identity checks + buildSegmentCacheKey isolation
+  {
+    const validReq = GenerateTtsRequestSchema.safeParse({
+      segmentId: "seg_01",
+      speakerId: "host_01",
+      role: "explainer",
+      profileId: "kuromate_explainer_v1",
+      voiceIdentityId: "kuromate_leo_v1",
+      voiceId: "kuromate_leo_v1",
+      avatarId: "avatar_explainer_01",
+      hostName: "Leo",
+      text: "Hello world.",
+    });
+    const mismatchedReq = GenerateTtsRequestSchema.safeParse({
+      segmentId: "seg_01",
+      speakerId: "host_01",
+      role: "explainer",
+      voiceIdentityId: "kuromate_maya_v1",
+      voiceId: "kuromate_leo_v1",
+      text: "Hello world.",
+    });
+    const invalidIdentityReq = GenerateTtsRequestSchema.safeParse({
+      segmentId: "seg_01",
+      speakerId: "host_01",
+      role: "explainer",
+      voiceIdentityId: "Sulafat",
+      text: "Hello world.",
+    });
+
+    const sampleSeg = { id: "seg_01", order: 0, speakerId: "host_01", text: "Same words", emotion: "explaining", visualCue: { type: "none" } };
+    const keyLeo = buildSegmentCacheKey("ep_1", sampleSeg, "explainer", "kuromate_leo_v1");
+    const keyMaya = buildSegmentCacheKey("ep_1", sampleSeg, "explainer", "kuromate_maya_v1");
+    const keyRole = buildSegmentCacheKey("ep_1", sampleSeg, "learner", "kuromate_leo_v1");
+
+    check(
+      validReq.success &&
+        !mismatchedReq.success &&
+        !invalidIdentityReq.success &&
+        keyLeo !== keyMaya &&
+        keyLeo !== keyRole,
+      "[ID 06,07] Request schema enforces strict voiceIdentityId matching and cache keys isolate identity+role",
+    );
+  }
+
+  // ID-08..10: Route handler emits identity & hosted-state headers, keeps voice on Flash-Lite fallback, and signals all_hosted_daily_exhausted
+  {
+    const capturedVoices = [];
+    const resFallback = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_01",
+        speakerId: "host_01",
+        role: "explainer",
+        voiceIdentityId: "kuromate_leo_v1",
+        hostName: "Leo",
+        text: "Leo as explainer should still sound like Puck on fallback.",
+      }),
+      {
+        apiKey: "test-key",
+        env: {
+          GEMINI_TTS_MODEL: PRIMARY_GEMINI_TTS_MODEL,
+          GEMINI_TTS_FALLBACK_MODEL: LITE_GEMINI_TTS_MODEL,
+        },
+        transport: async (req) => {
+          capturedVoices.push({ model: req.model, voice: req.voice });
+          if (req.model === PRIMARY_GEMINI_TTS_MODEL) {
+            throw {
+              status: 429,
+              message: "Daily RPD limit 10 reached with AIzaSyFakeKey11111",
+              headers: { "retry-after": "68036" },
+            };
+          }
+          return {
+            base64Data: FLASH_LITE_C2PA_WAV_B64,
+            mimeType: "audio/wav",
+          };
+        },
+      },
+    );
+
+    const resBothExhausted = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_02",
+        speakerId: "host_02",
+        role: "learner",
+        voiceIdentityId: "kuromate_maya_v1",
+        hostName: "Maya",
+        text: "Maya as learner.",
+      }),
+      {
+        apiKey: "test-key",
+        env: {
+          GEMINI_TTS_MODEL: PRIMARY_GEMINI_TTS_MODEL,
+          GEMINI_TTS_FALLBACK_MODEL: LITE_GEMINI_TTS_MODEL,
+        },
+        transport: async () => {
+          throw {
+            status: 429,
+            message: "FreeTier quota exhausted for AIzaSyFakeKey00000",
+            headers: { "retry-after": "64000" },
+          };
+        },
+      },
+    );
+    const exhaustedBody = await resBothExhausted.json();
+    check(
+      resFallback.status === 200 &&
+        capturedVoices.length === 2 &&
+        capturedVoices[0].voice === "Puck" &&
+        capturedVoices[1].voice === "Puck" &&
+        resFallback.headers.get("X-Kuro-TTS-Identity") === "kuromate_leo_v1" &&
+        resFallback.headers.get("X-Kuro-TTS-Profile") === "kuromate_explainer_v1" &&
+        resFallback.headers.get("X-Kuro-TTS-Hosted-State") === "fallback_active" &&
+        resBothExhausted.status === 429 &&
+        resBothExhausted.headers.get("X-Kuro-TTS-Identity") === "kuromate_maya_v1" &&
+        resBothExhausted.headers.get("X-Kuro-TTS-Hosted-State") === "all_hosted_daily_exhausted" &&
+        exhaustedBody.error?.hostedState === "all_hosted_daily_exhausted" &&
+        exhaustedBody.error?.quotaClass === "long_quota_wait" &&
+        !JSON.stringify(exhaustedBody).includes("AIzaSy"),
+      "[ID 08-10] Route keeps Puck for Leo(explainer) across primary->fallback, emits X-Kuro-TTS-Identity/Hosted-State, and sanitizes all_hosted_daily_exhausted 429",
+    );
+    // Reference resolveKuromateIdentityProfile directly so server helper contract stays exercised
+    check(
+      resolveKuromateIdentityProfile({
+        speakerId: "host_99",
+        hostName: "Maya",
+        role: "skeptic",
+      }).approvedVoice === "Sulafat",
+      "[ID 11] Direct resolveKuromateIdentityProfile respects Maya regardless of skeptic role",
     );
   }
 }
