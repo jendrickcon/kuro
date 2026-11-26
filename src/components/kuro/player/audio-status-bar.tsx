@@ -21,6 +21,12 @@ function resolveStatusPill(snapshot: EpisodeAudioQueueSnapshot): {
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
     };
   }
+  if (snapshot.outageState === "quota_exhausted") {
+    return {
+      label: "Daily voice limit",
+      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
+    };
+  }
   if (snapshot.outageState !== "none") {
     return {
       label: "Hosted audio unavailable",

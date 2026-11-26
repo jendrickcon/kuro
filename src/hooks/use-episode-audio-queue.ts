@@ -5,6 +5,7 @@ import type { Episode } from "@contracts/episode.schema";
 import {
   buildIdleEpisodeSnapshot,
   createEpisodeAudioQueueEngine,
+  getBrowserTtsSessionCircuit,
   type AudioDriver,
   type AudioDriverCallbacks,
   type AudioPlayOutcome,
@@ -13,13 +14,15 @@ import {
   type FetchSegmentAudioPayload,
   type FetchSegmentAudioResult,
 } from "@/lib/tts/episode-audio-queue-engine";
-import { TtsErrorCodeSchema, type TtsErrorCode } from "@/lib/tts/tts-contract";
+import { parseQuotaClassHeader } from "@/lib/tts/retry-after";
+import { TtsErrorCodeSchema, TtsQuotaClassSchema, type TtsErrorCode } from "@/lib/tts/tts-contract";
 
 interface TtsErrorEnvelope {
   error?: {
     code?: unknown;
     message?: unknown;
     retryable?: unknown;
+    quotaClass?: unknown;
   };
 }
 
@@ -42,6 +45,15 @@ async function fetchBrowserSegmentAudio(
       body: JSON.stringify(payload),
     });
 
+    const headerQuotaClass = parseQuotaClassHeader(
+      response.headers.get("X-Kuro-TTS-Quota-Class"),
+    );
+    const fallbackUsed = response.headers.get("X-Kuro-TTS-Fallback-Used") === "true";
+    const retryAfterHeader =
+      response.headers.get("X-Kuro-TTS-Retry-After") ?? response.headers.get("Retry-After");
+    const profileId =
+      response.headers.get("X-Kuro-TTS-Profile") ?? response.headers.get("X-Kuro-Profile-Id");
+
     if (!response.ok) {
       let errorCode: TtsErrorCode =
         response.status === 429
@@ -51,6 +63,7 @@ async function fetchBrowserSegmentAudio(
             : "TTS_PROVIDER_UNAVAILABLE";
       let message = "Hosted Kuromate voice is unavailable right now. Captions remain active.";
       let retryable = response.status >= 500 || response.status === 429;
+      let quotaClass = headerQuotaClass;
 
       try {
         const json = (await response.json()) as TtsErrorEnvelope;
@@ -64,6 +77,10 @@ async function fetchBrowserSegmentAudio(
         if (typeof json?.error?.retryable === "boolean") {
           retryable = json.error.retryable;
         }
+        const parsedQuota = TtsQuotaClassSchema.safeParse(json?.error?.quotaClass);
+        if (parsedQuota.success && parsedQuota.data !== "none") {
+          quotaClass = parsedQuota.data;
+        }
       } catch {
         // Keep safe generic fallback message when response body is unreadable.
       }
@@ -74,7 +91,9 @@ async function fetchBrowserSegmentAudio(
         errorCode,
         message,
         retryable,
-        retryAfterHeader: response.headers.get("Retry-After"),
+        retryAfterHeader,
+        quotaClass,
+        fallbackUsed,
       };
     }
 
@@ -106,6 +125,10 @@ async function fetchBrowserSegmentAudio(
       blob,
       contentType,
       durationMs,
+      fallbackUsed,
+      quotaClass: headerQuotaClass,
+      retryAfterHeader,
+      profileId,
     };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
@@ -401,6 +424,7 @@ export function useEpisodeAudioQueue(
       fetchSegmentAudio: fetchBrowserSegmentAudio,
       audioDriver: createBrowserAudioDriver(),
       minRequestIntervalMs,
+      sessionCircuit: getBrowserTtsSessionCircuit(),
     });
     engineRef.current = engine;
 

@@ -46,18 +46,31 @@ module.registerHooks({
 
 const { HostRoleSchema } = await import("../contracts/episode.schema.ts");
 const { decodeAndInspectTtsAudio } = await import("../src/lib/tts/audio-inspect.ts");
+const { createEpisodeAudioQueueEngine, createTtsSessionCircuit } = await import(
+  "../src/lib/tts/episode-audio-queue-engine.ts"
+);
 const {
+  ALLOWED_GEMINI_TTS_FALLBACK_MODELS,
   ALLOWED_GEMINI_TTS_MODELS,
   classifyGeminiTtsError,
+  LITE_GEMINI_TTS_MODEL,
   PRIMARY_GEMINI_TTS_MODEL,
 } = await import("../src/lib/tts/gemini-tts-client.ts");
 const {
   generateSegmentTts,
+  isAllowedGeminiTtsFallbackModel,
   MAX_TTS_MODEL_CHOICES,
+  MAX_TTS_MODEL_SWITCHES,
   MAX_TTS_PROVIDER_ATTEMPTS,
   MAX_TTS_REGENERATION_ATTEMPTS,
+  resolveGeminiTtsFallbackModel,
 } = await import("../src/lib/tts/gemini-tts-service.ts");
 const { createObjectUrlManager } = await import("../src/lib/tts/object-url-manager.ts");
+const {
+  classifyRetryAfter,
+  parseQuotaClassHeader,
+  parseRetryAfterMs,
+} = await import("../src/lib/tts/retry-after.ts");
 const {
   GenerateTtsFailureSchema,
   GenerateTtsRequestSchema,
@@ -446,44 +459,49 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
   );
 }
 
-// 15-19. Provider 429, 503, timeout, auth error, and safety rejection
+// 15-19. Single-model error classification (with explicit rollback `fallbackModel: null` on transient cases) and permanent auth/safety rejection
 {
   for (const tc of [
     {
-      label: "15. provider 429 maps to 429 TTS_RATE_LIMITED with Retry-After and 1 call",
+      label: "15. single-model provider 429 maps to 429 TTS_RATE_LIMITED with Retry-After and 1 call",
       err: { status: 429, message: "rate limited", headers: { "retry-after": "7" } },
       expectedStatus: 429,
       expectedCode: "TTS_RATE_LIMITED",
       expectedRetryable: true,
       expectedRetryAfter: "7",
+      disableFallback: true,
     },
     {
-      label: "16. provider 503 maps to 503 TTS_PROVIDER_UNAVAILABLE with 1 call",
+      label: "16. single-model provider 503 maps to 503 TTS_PROVIDER_UNAVAILABLE with 1 call",
       err: { status: 503, message: "503 service unavailable" },
       expectedStatus: 503,
       expectedCode: "TTS_PROVIDER_UNAVAILABLE",
       expectedRetryable: true,
+      disableFallback: true,
     },
     {
-      label: "17. provider timeout maps to 504 TTS_TIMEOUT with 1 call",
+      label: "17. single-model provider timeout maps to 504 TTS_TIMEOUT with 1 call",
       err: { name: "AbortError", message: "aborted after 30000ms" },
       expectedStatus: 504,
       expectedCode: "TTS_TIMEOUT",
       expectedRetryable: true,
+      disableFallback: true,
     },
     {
-      label: "18. authentication failure maps to non-retryable 502 TTS_GENERATION_FAILED without key leak",
+      label: "18. authentication failure maps to non-retryable 502 TTS_GENERATION_FAILED without key leak or fallback",
       err: { status: 401, message: "API key AIzaSuperSecret123 rejected" },
       expectedStatus: 502,
       expectedCode: "TTS_GENERATION_FAILED",
       expectedRetryable: false,
+      disableFallback: false,
     },
     {
-      label: "19. safety rejection maps to non-retryable 502 TTS_GENERATION_FAILED with 1 call",
+      label: "19. safety rejection maps to non-retryable 502 TTS_GENERATION_FAILED with 1 call and no fallback",
       err: { status: 400, message: "Request blocked due to PROHIBITED_CONTENT SAFETY policy" },
       expectedStatus: 502,
       expectedCode: "TTS_GENERATION_FAILED",
       expectedRetryable: false,
+      disableFallback: false,
     },
   ]) {
     let calls = 0;
@@ -492,6 +510,7 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
       {
         apiKey: "AIzaSuperSecret123",
         env: {},
+        ...(tc.disableFallback ? { fallbackModel: null } : {}),
         transport: async () => {
           calls += 1;
           throw classifyGeminiTtsError(tc.err);
@@ -654,14 +673,533 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
   );
 }
 
-// 25. Explicit maximum provider-call bound verified
+// 25. Explicit maximum provider-call bound verified & WP-011.5 Section 17 TTS Matrix (1-30)
 {
   check(
-    MAX_TTS_MODEL_CHOICES === 1 &&
+    MAX_TTS_MODEL_CHOICES === 2 &&
+      MAX_TTS_MODEL_SWITCHES === 1 &&
       MAX_TTS_REGENERATION_ATTEMPTS === 1 &&
-      MAX_TTS_PROVIDER_ATTEMPTS === 2,
-    "25. explicit TTS provider-call constants enforce <= 2 total upstream calls per segment",
+      MAX_TTS_PROVIDER_ATTEMPTS === 3 &&
+      ALLOWED_GEMINI_TTS_FALLBACK_MODELS.length === 1 &&
+      ALLOWED_GEMINI_TTS_FALLBACK_MODELS[0] === LITE_GEMINI_TTS_MODEL,
+    "25. explicit TTS bounds enforce <= 2 models, <= 1 switch, <= 1 repair, and <= 3 max upstream attempts",
   );
+}
+
+function makeSyntheticC2paWavBase64({ durationMs = 1400 } = {}) {
+  const sampleRate = 24000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const sampleCount = Math.round((sampleRate * durationMs) / 1000);
+  const dataSize = sampleCount * blockAlign;
+
+  const fmtChunk = Buffer.alloc(24);
+  fmtChunk.write("fmt ", 0, "ascii");
+  fmtChunk.writeUInt32LE(16, 4);
+  fmtChunk.writeUInt16LE(1, 8);
+  fmtChunk.writeUInt16LE(channels, 10);
+  fmtChunk.writeUInt32LE(sampleRate, 12);
+  fmtChunk.writeUInt32LE(byteRate, 16);
+  fmtChunk.writeUInt16LE(blockAlign, 20);
+  fmtChunk.writeUInt16LE(bitsPerSample, 22);
+
+  const dataHeader = Buffer.alloc(8);
+  dataHeader.write("data", 0, "ascii");
+  dataHeader.writeUInt32LE(dataSize, 4);
+
+  const pcm = Buffer.alloc(dataSize);
+  for (let i = 0; i < sampleCount; i += 1) {
+    pcm.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 260 * i) / sampleRate) * 4200), i * 2);
+  }
+
+  const c2paPayload = Buffer.from("KURO_C2PA_MANIFEST_VERIFY");
+  const c2paPadding = c2paPayload.length % 2 === 1 ? Buffer.from([0]) : Buffer.alloc(0);
+  const c2paHeader = Buffer.alloc(8);
+  c2paHeader.write("c2pa", 0, "ascii");
+  c2paHeader.writeUInt32LE(c2paPayload.length, 4);
+
+  const body = Buffer.concat([fmtChunk, dataHeader, pcm, c2paHeader, c2paPayload, c2paPadding]);
+  const riff = Buffer.alloc(12);
+  riff.write("RIFF", 0, "ascii");
+  riff.writeUInt32LE(4 + body.length, 4);
+  riff.write("WAVE", 8, "ascii");
+  return Buffer.concat([riff, body]).toString("base64");
+}
+
+const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 });
+
+// WP-011.5 Section 17 checks
+{
+  // TTS-01: Primary success, no fallback
+  {
+    const seenModels = [];
+    const res = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Primary succeeds first try." }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          seenModels.push(req.model);
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+    check(
+      res.status === 200 &&
+        seenModels.length === 1 &&
+        seenModels[0] === PRIMARY_GEMINI_TTS_MODEL &&
+        res.headers.get("x-kuro-tts-fallback-used") === "false" &&
+        res.headers.get("x-kuro-tts-quota-class") === "none" &&
+        res.headers.get("x-kuro-tts-profile") === "kuromate_explainer_v1",
+      "[WP-011.5 TTS 01] Primary success uses 1 attempt and sets fallback-used=false",
+    );
+  }
+
+  // TTS-02 & 05 & 24: Primary 429 long Retry-After switches once to Flash-Lite & returns safe fallback + quota headers
+  {
+    const seenModels = [];
+    const res = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Opportunity cost fallback clip." }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          seenModels.push(req.model);
+          if (req.model === PRIMARY_GEMINI_TTS_MODEL) {
+            throw {
+              status: 429,
+              message: "Rate limit exceeded for model gemini-3.8-flash-tts (limit: 10 requests per day on Free Tier).",
+              headers: { "retry-after": "68036" },
+            };
+          }
+          return { base64Data: FLASH_LITE_C2PA_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+    const bodyBytes = Buffer.from(await res.arrayBuffer());
+    const serializedHeaders = JSON.stringify(Object.fromEntries(res.headers.entries())).toLowerCase();
+    const circuit = createTtsSessionCircuit();
+    if (parseQuotaClassHeader(res.headers.get("x-kuro-tts-quota-class")) === "long_quota_wait") {
+      circuit.openPrimary(1_000_000, Number(res.headers.get("x-kuro-tts-retry-after")));
+    }
+    check(
+      res.status === 200 &&
+        bodyBytes.length > 0 &&
+        seenModels.length === 2 &&
+        seenModels[0] === PRIMARY_GEMINI_TTS_MODEL &&
+        seenModels[1] === LITE_GEMINI_TTS_MODEL &&
+        res.headers.get("x-kuro-tts-fallback-used") === "true" &&
+        res.headers.get("x-kuro-tts-quota-class") === "long_quota_wait" &&
+        res.headers.get("x-kuro-tts-retry-after") === "68036" &&
+        res.headers.get("x-kuro-tts-profile") === "kuromate_explainer_v1" &&
+        res.headers.get("x-kuro-provider-attempts") === "2" &&
+        !serializedHeaders.includes(PRIMARY_GEMINI_TTS_MODEL) &&
+        !serializedHeaders.includes(LITE_GEMINI_TTS_MODEL) &&
+        circuit.isPrimaryOpen(1_000_000) === true &&
+        circuit.getState(1_000_000).lastRetryAfterSeconds === 68036,
+      "[WP-011.5 TTS 02,05,24] Primary daily 429 switches once to Flash-Lite, emits sanitized quota headers, and opens session circuit",
+    );
+  }
+
+  // TTS-03: Primary 503 switches once to Flash-Lite
+  {
+    const seenModels = [];
+    const res = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_02", speakerId: "h_2", role: "learner", text: "Wait, why did primary pause?" }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          seenModels.push(req.model);
+          if (req.model === PRIMARY_GEMINI_TTS_MODEL) {
+            throw { status: 503, message: "503 SERVICE_UNAVAILABLE" };
+          }
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+    check(
+      res.status === 200 &&
+        seenModels.join(",") === `${PRIMARY_GEMINI_TTS_MODEL},${LITE_GEMINI_TTS_MODEL}` &&
+        res.headers.get("x-kuro-tts-fallback-used") === "true",
+      "[WP-011.5 TTS 03] Primary 503 switches once to Flash-Lite and succeeds",
+    );
+  }
+
+  // TTS-04: Primary timeout (RequestTimeoutError & RequestAbortedError) switches once to Flash-Lite
+  {
+    for (const errName of ["RequestTimeoutError", "RequestAbortedError"]) {
+      const seenModels = [];
+      const res = await handleTtsPost(
+        makeJsonRequest({ segmentId: "seg_03", speakerId: "h_3", role: "skeptic", text: "What if the primary request stalls?" }),
+        {
+          apiKey: "test-key",
+          env: {},
+          transport: async (req) => {
+            seenModels.push(req.model);
+            if (req.model === PRIMARY_GEMINI_TTS_MODEL) {
+              throw { name: errName, message: "timeout" };
+            }
+            return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+          },
+        },
+      );
+      check(
+        res.status === 200 &&
+          seenModels.join(",") === `${PRIMARY_GEMINI_TTS_MODEL},${LITE_GEMINI_TTS_MODEL}` &&
+          res.headers.get("x-kuro-tts-fallback-used") === "true",
+        `[WP-011.5 TTS 04] Primary ${errName} switches once to Flash-Lite and succeeds`,
+      );
+    }
+  }
+
+  // TTS-06 & 08: Retry-After long_quota_wait vs short_cooldown classification
+  {
+    const longCls = classifyRetryAfter("68036");
+    const dailyTextCls = classifyRetryAfter(null, { errorText: "limit: 10 requests per day" });
+    const shortCls = classifyRetryAfter("15");
+    check(
+      longCls.quotaClass === "long_quota_wait" &&
+        longCls.rawSeconds === 68036 &&
+        longCls.cooldownMs === null &&
+        dailyTextCls.quotaClass === "long_quota_wait" &&
+        shortCls.quotaClass === "short_cooldown" &&
+        shortCls.cooldownMs === 15_000 &&
+        parseRetryAfterMs("15") === 15_000 &&
+        parseRetryAfterMs("120") === 30_000,
+      "[WP-011.5 TTS 06,08] Long Retry-After classifies as long_quota_wait without short loop while short Retry-After remains bounded",
+    );
+  }
+
+  // TTS-07 & 28: routePreference: "fallback" routes directly with 0 primary calls; hostile fallback/model fields rejected
+  {
+    const seenModels = [];
+    const directFallback = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_04",
+        speakerId: "h_1",
+        role: "storyteller",
+        routePreference: "fallback",
+        text: "Storyteller uses direct fallback routing.",
+      }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          seenModels.push(req.model);
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+    const badRoute = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_04",
+        speakerId: "h_1",
+        role: "storyteller",
+        routePreference: "gemini-3.8-flash-lite-tts",
+        text: "Bad route pref",
+      }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async () => ({ base64Data: VALID_WAV_B64, mimeType: "audio/wav" }),
+      },
+    );
+    const extraFallbackField = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_04",
+        speakerId: "h_1",
+        role: "storyteller",
+        fallbackModel: "deepgram-aura-2",
+        text: "Hostile field",
+      }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async () => ({ base64Data: VALID_WAV_B64, mimeType: "audio/wav" }),
+      },
+    );
+    check(
+      directFallback.status === 200 &&
+        seenModels.length === 1 &&
+        seenModels[0] === LITE_GEMINI_TTS_MODEL &&
+        directFallback.headers.get("x-kuro-tts-fallback-used") === "true" &&
+        badRoute.status === 400 &&
+        extraFallbackField.status === 400,
+      "[WP-011.5 TTS 07,28] Circuit-open routePreference skips primary (1 call) while rejecting arbitrary browser model fields",
+    );
+  }
+
+  // TTS-09, 10, 11, 12, 13, 16: No fallback on auth/missing key/invalid input/bad models/safety
+  {
+    let noFallbackCalls = 0;
+    const authRes = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Auth check" }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async () => {
+          noFallbackCalls += 1;
+          throw { status: 403, message: "Permission denied" };
+        },
+      },
+    );
+    const safetyRes = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Safety check" }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async () => {
+          noFallbackCalls += 1;
+          throw { status: 400, message: "Blocked due to PROHIBITED_CONTENT" };
+        },
+      },
+    );
+    let configCalls = 0;
+    const badFallbackEnv = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Bad fallback env" }),
+      {
+        apiKey: "test-key",
+        env: { GEMINI_TTS_FALLBACK_MODEL: "gemini-3.8-flash" },
+        transport: async () => {
+          configCalls += 1;
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+    const badPrimaryEnv = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Bad primary env" }),
+      {
+        apiKey: "test-key",
+        env: { GEMINI_TTS_MODEL: "azure-neural-tts" },
+        transport: async () => {
+          configCalls += 1;
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+    const disabledFallback = resolveGeminiTtsFallbackModel({ GEMINI_TTS_FALLBACK_MODEL: "none" });
+    check(
+      authRes.status === 502 &&
+        safetyRes.status === 502 &&
+        noFallbackCalls === 2 &&
+        badFallbackEnv.status === 503 &&
+        badPrimaryEnv.status === 503 &&
+        configCalls === 0 &&
+        disabledFallback.configured === true &&
+        disabledFallback.model === null &&
+        !isAllowedGeminiTtsFallbackModel(PRIMARY_GEMINI_TTS_MODEL),
+      "[WP-011.5 TTS 09-13,16] Auth/missing-key/invalid/bad-model/safety never trigger fallback",
+    );
+  }
+
+  // TTS-14: Same primary & fallback avoids duplicate call
+  {
+    let sameCalls = 0;
+    const res = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_01", speakerId: "h_1", role: "specialist", text: "Already Lite" }),
+      {
+        apiKey: "test-key",
+        env: {
+          GEMINI_TTS_MODEL: LITE_GEMINI_TTS_MODEL,
+          GEMINI_TTS_FALLBACK_MODEL: LITE_GEMINI_TTS_MODEL,
+        },
+        transport: async () => {
+          sameCalls += 1;
+          throw { status: 429, message: "Busy", headers: { "retry-after": "5" } };
+        },
+      },
+    );
+    check(
+      res.status === 429 &&
+        sameCalls === 1 &&
+        res.headers.get("x-kuro-tts-fallback-used") === "false",
+      "[WP-011.5 TTS 14] Same primary and fallback model avoids duplicate call",
+    );
+  }
+
+  // TTS-15 & 19 & 20: Both primary and fallback fail bounded at 2 attempts / 1 switch
+  {
+    const seenModels = [];
+    const bothFail = await handleTtsPost(
+      makeJsonRequest({ segmentId: "seg_05", speakerId: "h_2", role: "moderator", text: "Both daily limited" }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          seenModels.push(req.model);
+          throw {
+            status: 429,
+            message: "Daily quota exceeded",
+            headers: { "retry-after": "68036" },
+          };
+        },
+      },
+    );
+    const jsonText = await bothFail.text();
+    const json = JSON.parse(jsonText);
+    check(
+      bothFail.status === 429 &&
+        seenModels.length === 2 &&
+        seenModels[0] === PRIMARY_GEMINI_TTS_MODEL &&
+        seenModels[1] === LITE_GEMINI_TTS_MODEL &&
+        bothFail.headers.get("x-kuro-tts-quota-class") === "long_quota_wait" &&
+        bothFail.headers.get("retry-after") === "68036" &&
+        json?.error?.quotaClass === "long_quota_wait" &&
+        !jsonText.includes(PRIMARY_GEMINI_TTS_MODEL) &&
+        !jsonText.includes(LITE_GEMINI_TTS_MODEL),
+      "[WP-011.5 TTS 15,19,20,25] Both-model 429 fails cleanly in 2 calls without leaking model IDs",
+    );
+  }
+
+  // TTS-17 & 18 & 21: Primary empty regen stays on primary; fallback corrupt regen hits ceiling <= 3; zero hidden SDK retries
+  {
+    const primarySeen = [];
+    const primaryEmptyRes = await generateSegmentTts(
+      GenerateTtsRequestSchema.parse({ segmentId: "seg_01", speakerId: "h_1", role: "explainer", text: "Repair primary" }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          primarySeen.push(req.model);
+          if (primarySeen.length === 1) return { base64Data: "", mimeType: "audio/wav" };
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+
+    const fallbackSeen = [];
+    const fallbackBadRes = await generateSegmentTts(
+      GenerateTtsRequestSchema.parse({ segmentId: "seg_02", speakerId: "h_2", role: "learner", text: "Repair fallback" }),
+      {
+        apiKey: "test-key",
+        env: {},
+        transport: async (req) => {
+          fallbackSeen.push(req.model);
+          if (req.model === PRIMARY_GEMINI_TTS_MODEL) {
+            throw { status: 429, headers: { "retry-after": "10" }, message: "Short limit" };
+          }
+          return { base64Data: Buffer.from("NOT_WAV_BYTES").toString("base64"), mimeType: "audio/wav" };
+        },
+      },
+    );
+
+    const clientSrc = fs.readFileSync(path.join(root, "src/lib/tts/gemini-tts-client.ts"), "utf8");
+    const envExample = fs.readFileSync(path.join(root, ".env.example"), "utf8");
+    check(
+      primaryEmptyRes.ok &&
+        primaryEmptyRes.meta.sdkRetryDisabled === true &&
+        primarySeen.join(",") === `${PRIMARY_GEMINI_TTS_MODEL},${PRIMARY_GEMINI_TTS_MODEL}` &&
+        !fallbackBadRes.ok &&
+        fallbackBadRes.meta.providerAttempts === MAX_TTS_PROVIDER_ATTEMPTS &&
+        fallbackSeen.join(",") === `${PRIMARY_GEMINI_TTS_MODEL},${LITE_GEMINI_TTS_MODEL},${LITE_GEMINI_TTS_MODEL}` &&
+        clientSrc.includes("retryOptions: { attempts: 1 }") &&
+        clientSrc.includes('strategy: "none"') &&
+        envExample.includes("GEMINI_TTS_FALLBACK_MODEL=gemini-3.8-flash-lite-tts"),
+      "[WP-011.5 TTS 17,18,21,26] Empty/invalid regen obeys <= 3 attempt ceiling and disables hidden SDK retries",
+    );
+  }
+
+  // TTS-22, 23, 27, 29, 30: C2PA Flash-Lite WAV validates, 6 profiles resolve, queue accepts fallback & revokes URLs
+  {
+    const inspectedC2pa = decodeAndInspectTtsAudio(FLASH_LITE_C2PA_WAV_B64, "audio/wav");
+    let invalidMetaRejected = false;
+    try {
+      decodeAndInspectTtsAudio(
+        makeSyntheticC2paWavBase64({ durationMs: 0 }),
+        "audio/wav",
+      );
+    } catch {
+      invalidMetaRejected = true;
+    }
+
+    const revoked = [];
+    const q = createEpisodeAudioQueueEngine(
+      {
+        id: "ep_tts_cache_check",
+        title: "Cache Check",
+        topic: "Opportunity cost",
+        tone: "casual",
+        length: "quick",
+        status: "ready",
+        createdAt: "2026-11-26T00:00:00Z",
+        hosts: [
+          { id: "h1", name: "Maya", role: "explainer", voiceId: "v1", accentColor: "#2563EB", avatarId: "a1" },
+          { id: "h2", name: "Leo", role: "learner", voiceId: "v2", accentColor: "#D97706", avatarId: "a2" },
+        ],
+        segments: [
+          { id: "s1", order: 0, speakerId: "h1", text: "Turn one", emotion: "explaining", visualCue: { type: "none" } },
+          { id: "s2", order: 1, speakerId: "h2", text: "Turn two", emotion: "curious", visualCue: { type: "none" } },
+        ],
+      },
+      {
+        fetchSegmentAudio: async () => ({
+          ok: true,
+          blob: new Blob(["wav"]),
+          contentType: "audio/wav",
+          durationMs: 1400,
+          fallbackUsed: true,
+          quotaClass: "long_quota_wait",
+          retryAfterHeader: "68036",
+        }),
+        audioDriver: {
+          async loadAndPlay() { return { ok: true }; },
+          async resume() { return { ok: true }; },
+          pause() { return 0; },
+          stop() {},
+          getCurrentTimeSec() { return 0; },
+          dispose() {},
+        },
+        urlApi: {
+          createObjectURL: () => "blob:kuro-fallback/1",
+          revokeObjectURL: (u) => revoked.push(u),
+        },
+        minRequestIntervalMs: 1000,
+      },
+    );
+    q.startPreparation();
+    await Promise.resolve();
+    const s1Ready = q.getSnapshot().segments[0].hasCachedAudio && q.getSnapshot().usedFallbackAudio;
+    q.dispose();
+
+    const allSix = HostRoleSchema.options.every((r) => Boolean(resolveKuromateVoiceProfile(r).voice));
+    check(
+      inspectedC2pa.metadata.sampleRateHz === 24000 &&
+        inspectedC2pa.metadata.channels === 1 &&
+        inspectedC2pa.metadata.bitDepth === 16 &&
+        inspectedC2pa.metadata.durationMs === 1400 &&
+        invalidMetaRejected &&
+        allSix &&
+        s1Ready &&
+        revoked.length === 1,
+      "[WP-011.5 TTS 22,23,27,29,30] Flash-Lite C2PA WAV, 6 profiles, cache retention, and exact-once revocation pass",
+    );
+  }
+
+  // Also scan additional client-imported helper files for model/secret leaks
+  {
+    const extraClientFiles = [
+      path.join(root, "src/lib/tts/retry-after.ts"),
+      path.join(root, "src/lib/tts/tts-contract.ts"),
+      path.join(root, "src/lib/tts/episode-audio-queue-engine.ts"),
+      path.join(root, "src/lib/episode/unified-loading-state.ts"),
+    ];
+    const leaked = extraClientFiles.filter((filePath) => {
+      const lower = fs.readFileSync(filePath, "utf8").toLowerCase();
+      return (
+        lower.includes(PRIMARY_GEMINI_TTS_MODEL) ||
+        lower.includes(LITE_GEMINI_TTS_MODEL) ||
+        lower.includes("gemini_api_key") ||
+        lower.includes("@google/genai")
+      );
+    });
+    check(
+      leaked.length === 0,
+      "[WP-011.5 TTS 25b] All client-imported TTS queue/state files exclude Gemini model IDs, SDK, and secrets",
+    );
+  }
 }
 
 console.log(`ALL ${passed} TTS TESTS PASSED.`);

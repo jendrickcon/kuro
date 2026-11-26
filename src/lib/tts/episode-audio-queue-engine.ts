@@ -6,8 +6,14 @@ import {
   type EpisodeObjectUrlPool,
   type ObjectUrlApi,
 } from "@/lib/tts/object-url-manager";
-import { parseRetryAfterMs } from "@/lib/tts/retry-after";
-import type { TtsErrorCode } from "@/lib/tts/tts-contract";
+import {
+  classifyRetryAfter,
+  parseRetryAfterMs,
+  parseRetryAfterRawSeconds,
+  sanitizeRetryAfterSeconds,
+  type TtsQuotaClass,
+} from "@/lib/tts/retry-after";
+import type { TtsErrorCode, TtsRoutePreference } from "@/lib/tts/tts-contract";
 import {
   INITIAL_AUDIO_BUFFER_SIZE,
   MAX_AUTOMATIC_CAPACITY_RETRIES_PER_SEGMENT,
@@ -43,6 +49,85 @@ export const MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE =
 export const MAX_AUTOMATIC_PROVIDER_CALLS_PER_SEGMENT = 3;
 export const OUTAGE_CONSECUTIVE_NON_CAPACITY_ERRORS = 2;
 export const CAPACITY_RETRY_FALLBACK_COOLDOWN_MS = 2_000;
+export const DEFAULT_LONG_QUOTA_CIRCUIT_WINDOW_MS = 30 * 60 * 1000;
+
+export interface TtsSessionCircuitState {
+  primaryOpen: boolean;
+  primaryResetAtMs: number | null;
+  lastRetryAfterSeconds: number | null;
+  quotaClass: TtsQuotaClass;
+}
+
+export interface TtsSessionCircuit {
+  isPrimaryOpen: (nowMs?: number) => boolean;
+  openPrimary: (nowMs: number, retryAfterSeconds?: number | null) => void;
+  reset: () => void;
+  getState: (nowMs?: number) => TtsSessionCircuitState;
+}
+
+/**
+ * In-memory session-level circuit breaker preventing repeated calls to a daily-quota-exhausted
+ * primary TTS model across segments and episodes in the same active session.
+ */
+export function createTtsSessionCircuit(): TtsSessionCircuit {
+  let primaryOpen = false;
+  let primaryResetAtMs: number | null = null;
+  let lastRetryAfterSeconds: number | null = null;
+  let quotaClass: TtsQuotaClass = "none";
+
+  function refreshIfExpired(nowMs: number) {
+    if (primaryOpen && primaryResetAtMs !== null && nowMs >= primaryResetAtMs) {
+      primaryOpen = false;
+      primaryResetAtMs = null;
+      lastRetryAfterSeconds = null;
+      quotaClass = "none";
+    }
+  }
+
+  return {
+    isPrimaryOpen(nowMs = Date.now()) {
+      refreshIfExpired(nowMs);
+      return primaryOpen;
+    },
+    openPrimary(nowMs, retryAfterSeconds) {
+      const sanitized = sanitizeRetryAfterSeconds(retryAfterSeconds);
+      const windowMs =
+        sanitized !== undefined ? sanitized * 1000 : DEFAULT_LONG_QUOTA_CIRCUIT_WINDOW_MS;
+      primaryOpen = true;
+      primaryResetAtMs = nowMs + windowMs;
+      lastRetryAfterSeconds = sanitized ?? null;
+      quotaClass = "long_quota_wait";
+    },
+    reset() {
+      primaryOpen = false;
+      primaryResetAtMs = null;
+      lastRetryAfterSeconds = null;
+      quotaClass = "none";
+    },
+    getState(nowMs = Date.now()) {
+      refreshIfExpired(nowMs);
+      return {
+        primaryOpen,
+        primaryResetAtMs,
+        lastRetryAfterSeconds,
+        quotaClass,
+      };
+    },
+  };
+}
+
+let browserSessionCircuit: TtsSessionCircuit | null = null;
+
+export function getBrowserTtsSessionCircuit(): TtsSessionCircuit {
+  if (!browserSessionCircuit) {
+    browserSessionCircuit = createTtsSessionCircuit();
+  }
+  return browserSessionCircuit;
+}
+
+export function resetBrowserTtsSessionCircuit(): void {
+  browserSessionCircuit?.reset();
+}
 
 const REACTION_START_DELAY_MS = 80;
 const REACTION_END_DELAY_MS = 760;
@@ -87,7 +172,18 @@ export type EpisodePlaybackStatus =
   | "complete";
 
 export type EpisodeAudioMode = "hosted" | "timed-fallback";
-export type QueueOutageState = "none" | "config_error" | "auth_error" | "provider_outage";
+export type QueueOutageState =
+  | "none"
+  | "config_error"
+  | "auth_error"
+  | "provider_outage"
+  | "quota_exhausted";
+export type EpisodeAudioSourceSummary =
+  | "primary"
+  | "fallback"
+  | "mixed"
+  | "caption-only"
+  | "pending";
 export type SegmentFailureCategory = "transient" | "permanent";
 export type SegmentFailureClass =
   | "capacity"
@@ -113,6 +209,10 @@ export type FetchSegmentAudioResult =
       blob: Blob;
       contentType: string;
       durationMs: number | null;
+      fallbackUsed?: boolean;
+      quotaClass?: TtsQuotaClass;
+      retryAfterHeader?: string | null;
+      profileId?: string | null;
     }
   | {
       ok: false;
@@ -121,6 +221,8 @@ export type FetchSegmentAudioResult =
       message: string;
       retryable: boolean;
       retryAfterHeader?: string | null;
+      quotaClass?: TtsQuotaClass;
+      fallbackUsed?: boolean;
       isNetworkError?: boolean;
     };
 
@@ -129,6 +231,7 @@ export interface FetchSegmentAudioPayload {
   speakerId: string;
   role: HostRole;
   text: string;
+  routePreference?: TtsRoutePreference;
 }
 
 export interface AudioDriverCallbacks {
@@ -173,6 +276,7 @@ export interface EpisodeAudioQueueDeps {
   timers?: TimerDriver;
   now?: () => number;
   minRequestIntervalMs?: number | string | null;
+  sessionCircuit?: TtsSessionCircuit;
 }
 
 export interface SegmentQueueEntryView {
@@ -182,6 +286,7 @@ export interface SegmentQueueEntryView {
   cacheKey: string;
   status: SegmentQueueStatus;
   hasCachedAudio: boolean;
+  audioSource: "primary" | "fallback" | null;
   durationMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -231,6 +336,12 @@ export interface EpisodeAudioQueueSnapshot {
   readyCount: number;
   failedCount: number;
   inFlightCount: number;
+  usedFallbackAudio: boolean;
+  fallbackReadyCount: number;
+  primaryReadyCount: number;
+  primaryCircuitOpen: boolean;
+  longQuotaExhausted: boolean;
+  audioSourceSummary: EpisodeAudioSourceSummary;
   cooldownActive: boolean;
   cooldownRemainingMs: number;
   currentSegmentState: SegmentQueueStatus;
@@ -285,6 +396,7 @@ interface InternalSegmentEntry {
   cacheKey: string;
   status: SegmentQueueStatus;
   objectUrl: string | null;
+  audioSource: "primary" | "fallback" | null;
   durationMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -362,6 +474,12 @@ export function buildIdleEpisodeSnapshot(
     readyCount: 0,
     failedCount: 0,
     inFlightCount: 0,
+    usedFallbackAudio: false,
+    fallbackReadyCount: 0,
+    primaryReadyCount: 0,
+    primaryCircuitOpen: false,
+    longQuotaExhausted: false,
+    audioSourceSummary: "pending",
     cooldownActive: false,
     cooldownRemainingMs: 0,
     currentSegmentState: "idle",
@@ -385,6 +503,7 @@ export function buildIdleEpisodeSnapshot(
         cacheKey: buildSegmentCacheKey(episode.id, seg, role),
         status: "idle",
         hasCachedAudio: false,
+        audioSource: null,
         durationMs: null,
         errorCode: null,
         errorMessage: null,
@@ -504,6 +623,7 @@ export function createEpisodeAudioQueueEngine(
   const now = deps.now ?? Date.now;
   const effectiveMinIntervalMs = resolveTtsRequestIntervalMs(deps.minRequestIntervalMs);
   const urlPool: EpisodeObjectUrlPool = createEpisodeObjectUrlPool(deps.urlApi);
+  const sessionCircuit = deps.sessionCircuit ?? createTtsSessionCircuit();
 
   const orderedSegments = [...episode.segments].sort((a, b) => a.order - b.order);
   const hostsById = new Map<string, Host>(episode.hosts.map((h) => [h.id, h]));
@@ -518,6 +638,7 @@ export function createEpisodeAudioQueueEngine(
       cacheKey: buildSegmentCacheKey(episode.id, segment, role ?? "unknown"),
       status: "idle",
       objectUrl: null,
+      audioSource: null,
       durationMs: null,
       errorCode: null,
       errorMessage: null,
@@ -676,12 +797,7 @@ export function createEpisodeAudioQueueEngine(
     }
 
     if (!e0 || e0.objectUrl === null) {
-      if (
-        e0?.status === "failed" ||
-        outageState === "config_error" ||
-        outageState === "auth_error" ||
-        outageState === "provider_outage"
-      ) {
+      if (e0?.status === "failed" || outageState !== "none") {
         audioPreparationStatus = "unavailable";
         notice =
           e0?.errorMessage ??
@@ -907,9 +1023,33 @@ export function createEpisodeAudioQueueEngine(
     const activeHost = hostsById.get(activeSpeakerId);
     const previousHost = previousSegment ? hostsById.get(previousSegment.speakerId) : undefined;
     const readyCount = entries.filter((e) => e.objectUrl !== null).length;
+    const primaryReadyCount = entries.filter(
+      (e) => e.objectUrl !== null && e.audioSource !== "fallback",
+    ).length;
+    const fallbackReadyCount = entries.filter(
+      (e) => e.objectUrl !== null && e.audioSource === "fallback",
+    ).length;
+    const usedFallbackAudio = fallbackReadyCount > 0;
+    const currentNowMs = now();
+    const primaryCircuitOpen = sessionCircuit.isPrimaryOpen(currentNowMs);
+    const longQuotaExhausted = outageState === "quota_exhausted";
+    const audioSourceSummary: EpisodeAudioSourceSummary =
+      audioMode === "timed-fallback"
+        ? "caption-only"
+        : primaryReadyCount > 0 && fallbackReadyCount > 0
+          ? "mixed"
+          : fallbackReadyCount > 0
+            ? "fallback"
+            : primaryReadyCount > 0
+              ? "primary"
+              : outageState === "quota_exhausted" ||
+                  outageState === "config_error" ||
+                  outageState === "auth_error"
+                ? "caption-only"
+                : "pending";
     const failedCount = entries.filter((e) => e.status === "failed").length;
-    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > now();
-    const cooldownRemainingMs = cooldownActive ? Math.max(0, cooldownUntilMs - now()) : 0;
+    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > currentNowMs;
+    const cooldownRemainingMs = cooldownActive ? Math.max(0, cooldownUntilMs - currentNowMs) : 0;
     const retryUi = evaluateCurrentRetryUi(currentEntry, currentIndex, cooldownActive, cooldownRemainingMs);
 
     const initialBufferReadyCount = countInitialBufferReady();
@@ -987,6 +1127,12 @@ export function createEpisodeAudioQueueEngine(
       readyCount,
       failedCount,
       inFlightCount: inFlightControllers.size,
+      usedFallbackAudio,
+      fallbackReadyCount,
+      primaryReadyCount,
+      primaryCircuitOpen,
+      longQuotaExhausted,
+      audioSourceSummary,
       cooldownActive,
       cooldownRemainingMs,
       currentSegmentState: currentEntry?.status ?? "idle",
@@ -1007,6 +1153,7 @@ export function createEpisodeAudioQueueEngine(
         cacheKey: entry.cacheKey,
         status: entry.status,
         hasCachedAudio: entry.objectUrl !== null,
+        audioSource: entry.audioSource,
         durationMs: entry.durationMs,
         errorCode: entry.errorCode,
         errorMessage: entry.errorMessage,
@@ -1229,6 +1376,7 @@ export function createEpisodeAudioQueueEngine(
     stopActivePlaybackOnly();
     urlPool.revoke(entry.cacheKey);
     entry.objectUrl = null;
+    entry.audioSource = null;
     entry.status = "failed";
     entry.errorCode = "TTS_AUDIO_INVALID";
     entry.errorMessage = "Could not decode hosted Kuromate audio in this browser.";
@@ -1474,6 +1622,7 @@ export function createEpisodeAudioQueueEngine(
     index: number,
     url: string,
     durationMs: number | null,
+    audioSource: "primary" | "fallback",
     wasTargetedRetry: boolean,
     shouldAutoPlayTargeted: boolean,
   ) {
@@ -1482,6 +1631,7 @@ export function createEpisodeAudioQueueEngine(
 
     consecutiveNonCapacityErrors = 0;
     entry.objectUrl = url;
+    entry.audioSource = audioSource;
     entry.durationMs = durationMs;
     entry.status = "ready";
     entry.errorCode = null;
@@ -1520,8 +1670,7 @@ export function createEpisodeAudioQueueEngine(
 
   function handleSegmentFetchSuccess(
     index: number,
-    durationMs: number | null,
-    blob: Blob,
+    res: Extract<FetchSegmentAudioResult, { ok: true }>,
     localSession: number,
     localReplayCycle: number,
     controller: AbortController,
@@ -1532,6 +1681,13 @@ export function createEpisodeAudioQueueEngine(
       return;
     }
 
+    if (res.quotaClass === "long_quota_wait") {
+      sessionCircuit.openPrimary(now(), parseRetryAfterRawSeconds(res.retryAfterHeader, now()));
+    }
+
+    const audioSource: "primary" | "fallback" = res.fallbackUsed ? "fallback" : "primary";
+    const durationMs = res.durationMs;
+    const blob = res.blob;
     const wasTargetedRetry = targetedRetryActiveIndex === index;
     const shouldAutoPlayTargeted = wasTargetedRetry && targetedRetryAutoPlay;
 
@@ -1547,6 +1703,7 @@ export function createEpisodeAudioQueueEngine(
         index,
         url,
         durationMs,
+        audioSource,
         wasTargetedRetry,
         shouldAutoPlayTargeted,
       );
@@ -1575,6 +1732,7 @@ export function createEpisodeAudioQueueEngine(
           index,
           url,
           durationMs,
+          audioSource,
           wasTargetedRetry,
           shouldAutoPlayTargeted,
         );
@@ -1637,6 +1795,30 @@ export function createEpisodeAudioQueueEngine(
 
     if (res.errorCode === "TTS_RATE_LIMITED") {
       rateLimitCount += 1;
+    }
+
+    const quotaClassification =
+      res.errorCode === "TTS_RATE_LIMITED"
+        ? classifyRetryAfter(res.retryAfterHeader, {
+            nowMs: now(),
+            errorText: res.message,
+            quotaClassHint: res.quotaClass,
+          })
+        : null;
+
+    if (quotaClassification?.quotaClass === "long_quota_wait") {
+      sessionCircuit.openPrimary(now(), quotaClassification.rawSeconds);
+      clearCooldownTimer();
+      entry.status = "failed";
+      entry.errorCode = res.errorCode;
+      entry.errorMessage =
+        "Hosted Kuromate voices have reached today’s limit. You can continue with timed captions.";
+      entry.failureClass = "capacity";
+      entry.retryable = true;
+      entry.retryAfterMs = null;
+      entry.capacityRetriesUsed = MAX_AUTOMATIC_CAPACITY_RETRIES_PER_SEGMENT;
+      handleOutageTriggered("quota_exhausted", entry.errorMessage);
+      return;
     }
 
     if (
@@ -1793,6 +1975,11 @@ export function createEpisodeAudioQueueEngine(
     providerRequestCount += 1;
     emit();
 
+    const routePreference: TtsRoutePreference | undefined =
+      sessionCircuit.isPrimaryOpen(startedAt) || entry.capacityRetriesUsed > 0
+        ? "fallback"
+        : undefined;
+
     void deps
       .fetchSegmentAudio(
         {
@@ -1800,6 +1987,7 @@ export function createEpisodeAudioQueueEngine(
           speakerId: entry.segment.speakerId,
           role: host.role,
           text: entry.segment.text.trim(),
+          ...(routePreference ? { routePreference } : {}),
         },
         controller.signal,
       )
@@ -1816,8 +2004,7 @@ export function createEpisodeAudioQueueEngine(
         if (result.ok) {
           handleSegmentFetchSuccess(
             index,
-            result.durationMs,
-            result.blob,
+            result,
             localSession,
             localReplayCycle,
             controller,
@@ -2174,6 +2361,8 @@ export function createEpisodeAudioQueueEngine(
 
     const isPermanentEpisodeOutage =
       outageState === "config_error" || outageState === "auth_error";
+    const skipUnfetchedRetriesOnReplay =
+      isPermanentEpisodeOutage || outageState === "quota_exhausted";
     const cooldownElapsed = cooldownTimer === null || cooldownUntilMs <= now();
 
     if (!isPermanentEpisodeOutage) {
@@ -2181,7 +2370,9 @@ export function createEpisodeAudioQueueEngine(
         outageState = "none";
       }
       consecutiveNonCapacityErrors = 0;
-      audioMode = "hosted";
+      if (outageState !== "quota_exhausted") {
+        audioMode = "hosted";
+      }
     }
 
     for (const entry of entries) {
@@ -2199,7 +2390,7 @@ export function createEpisodeAudioQueueEngine(
       }
 
       const permanent =
-        isPermanentEpisodeOutage ||
+        skipUnfetchedRetriesOnReplay ||
         (entry.failureClass !== null && !isRecoverableFailureClass(entry.failureClass)) ||
         (entry.status === "failed" && !entry.retryable);
 
@@ -2247,7 +2438,7 @@ export function createEpisodeAudioQueueEngine(
     const shouldAutoPlayAfterRetry = status === "playing" || status === "preparing";
     stopActivePlaybackOnly();
     consecutiveNonCapacityErrors = 0;
-    if (outageState === "provider_outage") {
+    if (outageState === "provider_outage" || outageState === "quota_exhausted") {
       outageState = "none";
       audioMode = "hosted";
     }
@@ -2357,6 +2548,7 @@ export function createEpisodeAudioQueueEngine(
     urlPool.revokeAll();
     for (const item of entries) {
       item.objectUrl = null;
+      item.audioSource = null;
       if (
         item.status === "playing" ||
         item.status === "generating" ||

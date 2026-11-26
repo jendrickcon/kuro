@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { HostRoleSchema } from "@contracts/episode.schema";
+import type { TtsQuotaClass } from "@/lib/tts/retry-after";
 import { KUROMATE_PROFILE_IDS, ROLE_TO_PROFILE_ID } from "@/lib/tts/voice-profiles";
+
+export type { TtsQuotaClass };
 
 /** Matches DialogueSegmentSchema max length so TTS never loosens script bounds. */
 export const TTS_MAX_TEXT_CHARS = 320;
@@ -16,6 +19,11 @@ const identifierSchema = z
 
 export const KuromateProfileIdSchema = z.enum(KUROMATE_PROFILE_IDS);
 
+export const TtsRoutePreferenceSchema = z.enum(["primary", "fallback"]);
+export type TtsRoutePreference = z.infer<typeof TtsRoutePreferenceSchema>;
+
+export const TtsQuotaClassSchema = z.enum(["none", "short_cooldown", "long_quota_wait"]);
+
 /** Strictly allowlisted single-segment TTS request; rejects arbitrary voices, models, styles, URLs, and keys. */
 export const GenerateTtsRequestSchema = z
   .object({
@@ -23,6 +31,7 @@ export const GenerateTtsRequestSchema = z
     speakerId: identifierSchema,
     role: HostRoleSchema,
     profileId: KuromateProfileIdSchema.optional(),
+    routePreference: TtsRoutePreferenceSchema.optional(),
     text: z.string().trim().min(1).max(TTS_MAX_TEXT_CHARS),
   })
   .strict()
@@ -59,6 +68,7 @@ export const GenerateTtsFailureSchema = z
         code: TtsErrorCodeSchema,
         message: z.string().trim().min(1).max(240),
         retryable: z.boolean(),
+        quotaClass: TtsQuotaClassSchema.optional(),
       })
       .strict(),
   })

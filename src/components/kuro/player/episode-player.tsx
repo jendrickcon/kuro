@@ -101,6 +101,8 @@ export function EpisodePlayer({
       <PlayerNotice
         source={source}
         usedFallback={usedFallback}
+        usedFallbackAudio={snapshot.usedFallbackAudio}
+        audioMode={snapshot.audioMode}
         episode={episode}
         requestedOptions={requestedOptions}
         audioAvailability={audioAvailability}

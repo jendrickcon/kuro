@@ -25,6 +25,8 @@ export interface UnifiedLoadingView {
   stepHeading: string;
   statusText: string;
   countdownText: string | null;
+  fallbackNotice: string | null;
+  isLongQuotaWait: boolean;
   voicesReadyCount: number;
   voicesTargetCount: number;
   voiceCountText: string;
@@ -55,6 +57,8 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Preparing your conversation",
       statusText: "Building the Kuromate discussion...",
       countdownText: null,
+      fallbackNotice: null,
+      isLongQuotaWait: false,
       voicesReadyCount: 0,
       voicesTargetCount: defaultTarget,
       voiceCountText: `Opening voices: 0 of ${defaultTarget} ready`,
@@ -77,6 +81,8 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Checking the conversation",
       statusText: "Validating the episode structure and host turns...",
       countdownText: null,
+      fallbackNotice: null,
+      isLongQuotaWait: false,
       voicesReadyCount: 0,
       voicesTargetCount: defaultTarget,
       voiceCountText: `Opening voices: 0 of ${defaultTarget} ready`,
@@ -99,6 +105,8 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Preparing your conversation",
       statusText: "Ready to create an episode.",
       countdownText: null,
+      fallbackNotice: null,
+      isLongQuotaWait: false,
       voicesReadyCount: 0,
       voicesTargetCount: defaultTarget,
       voiceCountText: `Opening voices: 0 of ${defaultTarget} ready`,
@@ -120,6 +128,10 @@ export function deriveUnifiedLoadingView(input: {
     : 0;
   const countdownText =
     cooldownSecs > 0 ? `Preparing more voices in ${cooldownSecs}s.` : null;
+  const isLongQuotaWait = queueSnapshot.longQuotaExhausted;
+  const fallbackNotice = queueSnapshot.usedFallbackAudio
+    ? "Primary hosted voices were busy, so Kuro prepared an available Kuromate voice."
+    : null;
 
   if (queueSnapshot.hasStartedPodcast) {
     return {
@@ -131,6 +143,8 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Ready to begin",
       statusText: "Studio active",
       countdownText,
+      fallbackNotice,
+      isLongQuotaWait,
       voicesReadyCount: ready,
       voicesTargetCount: target,
       voiceCountText,
@@ -157,6 +171,8 @@ export function deriveUnifiedLoadingView(input: {
             ? "Your opening Kuromate voice is ready"
             : "Your opening Kuromate voices are ready",
         countdownText: null,
+        fallbackNotice,
+        isLongQuotaWait,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -181,6 +197,8 @@ export function deriveUnifiedLoadingView(input: {
             ? "One opening voice is ready. Waiting briefly for the next turn."
             : "Voice generation is briefly paused.",
         countdownText,
+        fallbackNotice,
+        isLongQuotaWait,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -200,9 +218,12 @@ export function deriveUnifiedLoadingView(input: {
         panelTitle: "Preparing your conversation",
         stepNumber: 4,
         stepHeading: "Opening voice partially ready",
-        statusText:
-          "One opening voice is ready, while the second voice hit a temporary limit. Start with available audio and captions or continue preparing voices.",
-        countdownText,
+        statusText: isLongQuotaWait
+          ? "One opening voice is ready, while the next voice reached today’s limit. Start with available audio and captions."
+          : "One opening voice is ready, while the second voice hit a temporary limit. Start with available audio and captions or continue preparing voices.",
+        countdownText: isLongQuotaWait ? null : countdownText,
+        fallbackNotice,
+        isLongQuotaWait,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -225,13 +246,17 @@ export function deriveUnifiedLoadingView(input: {
         showFullStudio: false,
         panelTitle: "Preparing your conversation",
         stepNumber: 3,
-        stepHeading: permanentOutage
-          ? "Hosted voices unavailable"
-          : "Opening voices temporarily paused",
+        stepHeading: isLongQuotaWait
+          ? "Hosted voices reached today’s limit"
+          : permanentOutage
+            ? "Hosted voices unavailable"
+            : "Opening voices temporarily paused",
         statusText:
           queueSnapshot.preparationMessage ??
           "Hosted Kuromate voices are unavailable right now. Continue with timed captions or return to the form.",
-        countdownText,
+        countdownText: isLongQuotaWait ? null : countdownText,
+        fallbackNotice,
+        isLongQuotaWait,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -254,6 +279,8 @@ export function deriveUnifiedLoadingView(input: {
         stepHeading: "Voice preparation paused",
         statusText: "Opening-voice preparation was paused.",
         countdownText: null,
+        fallbackNotice,
+        isLongQuotaWait,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -281,6 +308,8 @@ export function deriveUnifiedLoadingView(input: {
         stepHeading: "Preparing the opening voices",
         statusText: `Preparing voice ${turnNum} of ${target}`,
         countdownText: null,
+        fallbackNotice,
+        isLongQuotaWait,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,

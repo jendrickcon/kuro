@@ -58,7 +58,7 @@ export function GenerationStatus({
     badgeText = "Rate limit wait";
     badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
   } else if (view.stage === "audio_unavailable") {
-    badgeText = "Voice unavailable";
+    badgeText = view.isLongQuotaWait ? "Daily limit" : "Voice unavailable";
     badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
   } else if (view.stage === "audio_cancelled") {
     badgeText = "Paused";
@@ -146,6 +146,11 @@ export function GenerationStatus({
         className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"
       >
         <p className="text-sm font-bold text-slate-950 break-words">{view.statusText}</p>
+        {view.fallbackNotice ? (
+          <p className="mt-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-950">
+            {view.fallbackNotice}
+          </p>
+        ) : null}
         {view.countdownText ? (
           <p className="mt-1 text-xs font-semibold tabular-nums text-amber-900">
             {view.countdownText}
@@ -251,7 +256,7 @@ export function GenerationStatus({
               >
                 {cooldownActive
                   ? `Retry available in ${cooldownSecs}s`
-                  : "Retry hosted voices later"}
+                  : "Retry hosted voices"}
               </button>
             ) : null}
           </>

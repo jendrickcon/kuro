@@ -2,6 +2,7 @@ import {
   generateSegmentTts,
   type GenerateSegmentTtsOptions,
 } from "@/lib/tts/gemini-tts-service";
+import { sanitizeRetryAfterSeconds } from "@/lib/tts/retry-after";
 import {
   GenerateTtsFailureSchema,
   GenerateTtsRequestSchema,
@@ -21,11 +22,13 @@ function invalidTtsInputResponse(message: string): Response {
     status: 400,
     headers: {
       "Cache-Control": "no-store",
+      "X-Kuro-TTS-Fallback-Used": "false",
+      "X-Kuro-TTS-Quota-Class": "none",
     },
   });
 }
 
-/** Handles single-segment Kuromate TTS synthesis with strict request validation and byte inspection. */
+/** Handles single-segment Kuromate TTS synthesis with strict request validation and safe response metadata. */
 export async function handleTtsPost(
   request: Request,
   options: GenerateSegmentTtsOptions = {},
@@ -73,6 +76,7 @@ export async function handleTtsPost(
     signal: options.signal ?? request.signal,
   });
 
+  // Log only sanitized, non-secret telemetry to server runtime logs.
   console.info(
     "[kuro/tts]",
     JSON.stringify({
@@ -81,13 +85,26 @@ export async function handleTtsPost(
     }),
   );
 
+  const sanitizedRetryAfter = sanitizeRetryAfterSeconds(
+    result.ok ? result.meta.retryAfterSeconds : result.retryAfterSeconds ?? result.meta.retryAfterSeconds,
+  );
+  const retryAfterHeaders: Record<string, string> =
+    sanitizedRetryAfter !== undefined
+      ? { "X-Kuro-TTS-Retry-After": String(sanitizedRetryAfter) }
+      : {};
+
   if (!result.ok) {
     return Response.json(result.response, {
       status: result.httpStatus,
       headers: {
         "Cache-Control": "no-store",
-        ...(result.retryAfterSeconds !== undefined
-          ? { "Retry-After": String(result.retryAfterSeconds) }
+        "X-Kuro-TTS-Fallback-Used": String(result.meta.fallbackUsed),
+        "X-Kuro-TTS-Quota-Class": result.meta.quotaClass,
+        "X-Kuro-TTS-Profile": result.meta.profileId,
+        "X-Kuro-Provider-Attempts": String(result.meta.providerAttempts),
+        ...retryAfterHeaders,
+        ...(sanitizedRetryAfter !== undefined
+          ? { "Retry-After": String(sanitizedRetryAfter) }
           : {}),
       },
     });
@@ -101,8 +118,13 @@ export async function handleTtsPost(
     "X-Kuro-Segment-Id": parsed.data.segmentId,
     "X-Kuro-Speaker-Id": parsed.data.speakerId,
     "X-Kuro-Profile-Id": result.profile.profileId,
+    "X-Kuro-TTS-Profile": result.profile.profileId,
     "X-Kuro-Audio-Bytes": String(result.audio.byteLength),
     "X-Kuro-Audio-Container": result.audio.container,
+    "X-Kuro-TTS-Fallback-Used": String(result.meta.fallbackUsed),
+    "X-Kuro-TTS-Quota-Class": result.meta.quotaClass,
+    "X-Kuro-Provider-Attempts": String(result.meta.providerAttempts),
+    ...retryAfterHeaders,
   };
   if (result.audio.durationMs !== undefined) {
     headers["X-Kuro-Audio-Duration-Ms"] = String(result.audio.durationMs);

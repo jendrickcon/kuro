@@ -4,30 +4,43 @@ import {
   type InspectedAudioResult,
 } from "@/lib/tts/audio-inspect";
 import {
+  ALLOWED_GEMINI_TTS_FALLBACK_MODELS,
   ALLOWED_GEMINI_TTS_MODELS,
   classifyGeminiTtsError,
   createGeminiTtsTransport,
   GEMINI_TTS_TIMEOUT_MS,
   GeminiTtsError,
+  isTtsCapacityFallbackEligible,
+  LITE_GEMINI_TTS_MODEL,
   PRIMARY_GEMINI_TTS_MODEL,
+  type AllowedGeminiTtsFallbackModel,
   type AllowedGeminiTtsModel,
   type GeminiTtsTransport,
 } from "@/lib/tts/gemini-tts-client";
+import type { TtsQuotaClass } from "@/lib/tts/retry-after";
 import {
   GenerateTtsFailureSchema,
   TTS_MAX_AUDIO_BYTES,
   type GenerateTtsFailure,
   type GenerateTtsRequest,
   type TtsErrorCode,
+  type TtsRoutePreference,
 } from "@/lib/tts/tts-contract";
 import { resolveKuromateVoiceProfile, type KuromateVoiceProfile } from "@/lib/tts/voice-profiles";
 
-/** Single model choice in WP-010 (automatic TTS fallback is deferred until live need is proven). */
-export const MAX_TTS_MODEL_CHOICES = 1;
-/** At most one bounded regeneration when provider returns empty or corrupt audio bytes. */
+/** Primary Gemini Flash TTS plus one allowlisted Gemini Flash-Lite TTS fallback. */
+export const MAX_TTS_MODEL_CHOICES = 2;
+/** Maximum automatic model switches permitted on one `/api/tts` request. */
+export const MAX_TTS_MODEL_SWITCHES = 1;
+/** At most one bounded regeneration when the active model returns empty or corrupt audio bytes. */
 export const MAX_TTS_REGENERATION_ATTEMPTS = 1;
-/** Absolute cap on upstream TTS provider calls per request. */
-export const MAX_TTS_PROVIDER_ATTEMPTS = 2;
+/**
+ * Absolute ceiling on upstream TTS provider calls per request:
+ * - Normal success: 1 call
+ * - Primary capacity failure + fallback success: 2 calls
+ * - Absolute max (1 primary capacity failure + 1 fallback + 1 malformed-audio repair): 3 calls
+ */
+export const MAX_TTS_PROVIDER_ATTEMPTS = 3;
 
 export interface GenerateSegmentTtsMeta {
   segmentId: string;
@@ -35,8 +48,13 @@ export interface GenerateSegmentTtsMeta {
   profileId: string;
   requestedModel: string;
   resolvedModel: string;
+  routePreference: TtsRoutePreference;
   fallbackUsed: boolean;
+  modelSwitches: number;
   providerAttempts: number;
+  sdkRetryDisabled: true;
+  quotaClass: TtsQuotaClass;
+  retryAfterSeconds?: number;
   latencyMs: number;
   byteLength?: number;
   durationMs?: number;
@@ -64,6 +82,7 @@ export type GenerateSegmentTtsResult =
 export interface GenerateSegmentTtsOptions {
   apiKey?: string;
   model?: string;
+  fallbackModel?: string | null;
   env?: Record<string, string | undefined>;
   timeoutMs?: number;
   maxAudioBytes?: number;
@@ -75,11 +94,41 @@ export function isAllowedGeminiTtsModel(value: string): value is AllowedGeminiTt
   return (ALLOWED_GEMINI_TTS_MODELS as readonly string[]).includes(value);
 }
 
+export function isAllowedGeminiTtsFallbackModel(
+  value: string,
+): value is AllowedGeminiTtsFallbackModel {
+  return (ALLOWED_GEMINI_TTS_FALLBACK_MODELS as readonly string[]).includes(value);
+}
+
 export function resolveGeminiTtsModel(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const configured = env.GEMINI_TTS_MODEL?.trim();
   return configured && configured.length > 0 ? configured : PRIMARY_GEMINI_TTS_MODEL;
+}
+
+export function resolveGeminiTtsFallbackModel(
+  env: Record<string, string | undefined> = process.env,
+  explicitOverride?: string | null,
+): { configured: true; model: AllowedGeminiTtsFallbackModel | null } | { configured: false; invalidModel: string } {
+  if (explicitOverride === null) {
+    return { configured: true, model: null };
+  }
+  const raw =
+    explicitOverride !== undefined
+      ? explicitOverride.trim()
+      : env.GEMINI_TTS_FALLBACK_MODEL?.trim();
+  if (!raw) {
+    return { configured: true, model: LITE_GEMINI_TTS_MODEL };
+  }
+  const normalized = raw.toLowerCase();
+  if (normalized === "none" || normalized === "off") {
+    return { configured: true, model: null };
+  }
+  if (!isAllowedGeminiTtsFallbackModel(raw)) {
+    return { configured: false, invalidModel: raw };
+  }
+  return { configured: true, model: raw };
 }
 
 function buildFailureResult(
@@ -92,7 +141,12 @@ function buildFailureResult(
 ): GenerateSegmentTtsResult {
   const response = GenerateTtsFailureSchema.parse({
     ok: false,
-    error: { code, message, retryable },
+    error: {
+      code,
+      message,
+      retryable,
+      ...(meta.quotaClass !== "none" ? { quotaClass: meta.quotaClass } : {}),
+    },
   });
   return {
     ok: false,
@@ -106,37 +160,58 @@ function buildFailureResult(
 function mapProviderFailure(
   error: GeminiTtsError,
   meta: GenerateSegmentTtsMeta,
+  resolvedQuotaClass: TtsQuotaClass,
+  resolvedRetryAfterSeconds?: number,
 ): GenerateSegmentTtsResult {
+  const enrichedMeta: GenerateSegmentTtsMeta = {
+    ...meta,
+    quotaClass: resolvedQuotaClass,
+    ...(resolvedRetryAfterSeconds !== undefined ? { retryAfterSeconds: resolvedRetryAfterSeconds } : {}),
+  };
+
   switch (error.kind) {
     case "missing_key":
     case "unsupported_model":
-      return buildFailureResult(503, "TTS_NOT_CONFIGURED", error.message, false, meta);
+      return buildFailureResult(503, "TTS_NOT_CONFIGURED", error.message, false, enrichedMeta);
     case "rate_limited":
       return buildFailureResult(
         429,
         "TTS_RATE_LIMITED",
         error.message,
         true,
-        meta,
-        error.retryAfterSeconds,
+        enrichedMeta,
+        resolvedRetryAfterSeconds,
       );
     case "timeout":
-      return buildFailureResult(504, "TTS_TIMEOUT", error.message, true, meta);
+      return buildFailureResult(504, "TTS_TIMEOUT", error.message, true, enrichedMeta);
     case "service_unavailable":
     case "unavailable":
-      return buildFailureResult(503, "TTS_PROVIDER_UNAVAILABLE", error.message, error.retryable, meta);
+      return buildFailureResult(
+        503,
+        "TTS_PROVIDER_UNAVAILABLE",
+        error.message,
+        error.retryable,
+        enrichedMeta,
+      );
     case "empty_audio":
     case "invalid_audio":
     case "oversized_audio":
-      return buildFailureResult(502, "TTS_AUDIO_INVALID", error.message, error.retryable, meta);
+      return buildFailureResult(
+        502,
+        "TTS_AUDIO_INVALID",
+        error.message,
+        error.retryable,
+        enrichedMeta,
+      );
     case "auth_error":
     case "safety_blocked":
-      return buildFailureResult(502, "TTS_GENERATION_FAILED", error.message, false, meta);
+    case "invalid_request":
+      return buildFailureResult(502, "TTS_GENERATION_FAILED", error.message, false, enrichedMeta);
     case "client_aborted":
-      return buildFailureResult(499, "TTS_GENERATION_FAILED", error.message, false, meta);
+      return buildFailureResult(499, "TTS_GENERATION_FAILED", error.message, false, enrichedMeta);
     case "internal":
     default:
-      return buildFailureResult(500, "INTERNAL_ERROR", error.message, error.retryable, meta);
+      return buildFailureResult(500, "INTERNAL_ERROR", error.message, error.retryable, enrichedMeta);
   }
 }
 
@@ -167,7 +242,7 @@ function mapInspectionError(err: AudioInspectionError): { error: GeminiTtsError;
   }
 }
 
-/** Generates, inspects, and validates hosted Gemini audio for one dialogue segment. */
+/** Generates, inspects, and validates hosted Gemini audio for one dialogue segment with bounded 1-switch fallback. */
 export async function generateSegmentTts(
   request: GenerateTtsRequest,
   options: GenerateSegmentTtsOptions = {},
@@ -175,18 +250,32 @@ export async function generateSegmentTts(
   const startedAt = Date.now();
   const env = options.env ?? process.env;
   const requestedModel = options.model?.trim() || resolveGeminiTtsModel(env);
+  const fallbackConfig = resolveGeminiTtsFallbackModel(env, options.fallbackModel);
+  const routePreference: TtsRoutePreference = request.routePreference ?? "primary";
   const timeoutMs = options.timeoutMs ?? GEMINI_TTS_TIMEOUT_MS;
   const maxAudioBytes = options.maxAudioBytes ?? TTS_MAX_AUDIO_BYTES;
   const profile = resolveKuromateVoiceProfile(request.role);
 
-  const baseMeta = (providerAttempts: number): GenerateSegmentTtsMeta => ({
+  const makeMeta = (
+    providerAttempts: number,
+    resolvedModel: string,
+    fallbackUsed: boolean,
+    modelSwitches: number,
+    quotaClass: TtsQuotaClass,
+    retryAfterSeconds?: number,
+  ): GenerateSegmentTtsMeta => ({
     segmentId: request.segmentId,
     speakerId: request.speakerId,
     profileId: profile.profileId,
     requestedModel,
-    resolvedModel: requestedModel,
-    fallbackUsed: false,
+    resolvedModel,
+    routePreference,
+    fallbackUsed,
+    modelSwitches,
     providerAttempts,
+    sdkRetryDisabled: true,
+    quotaClass,
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     latencyMs: Date.now() - startedAt,
   });
 
@@ -196,9 +285,22 @@ export async function generateSegmentTts(
       "TTS_NOT_CONFIGURED",
       "Configured Kuromate voice model is not supported on this server. Captions remain active.",
       false,
-      baseMeta(0),
+      makeMeta(0, requestedModel, false, 0, "none"),
     );
   }
+
+  if (!fallbackConfig.configured) {
+    return buildFailureResult(
+      503,
+      "TTS_NOT_CONFIGURED",
+      "Configured Kuromate fallback voice model is not supported on this server. Captions remain active.",
+      false,
+      makeMeta(0, requestedModel, false, 0, "none"),
+    );
+  }
+
+  const distinctFallbackModel =
+    fallbackConfig.model && fallbackConfig.model !== requestedModel ? fallbackConfig.model : null;
 
   const apiKey = options.apiKey !== undefined ? options.apiKey.trim() : (env.GEMINI_API_KEY?.trim() ?? "");
   if (!apiKey) {
@@ -207,7 +309,7 @@ export async function generateSegmentTts(
       "TTS_NOT_CONFIGURED",
       "Hosted Kuromate voice preview is not configured on this server. Captions remain active.",
       false,
-      baseMeta(0),
+      makeMeta(0, requestedModel, false, 0, "none"),
     );
   }
 
@@ -217,7 +319,7 @@ export async function generateSegmentTts(
       "TTS_GENERATION_FAILED",
       "Voice preview request was cancelled.",
       false,
-      baseMeta(0),
+      makeMeta(0, requestedModel, false, 0, "none"),
     );
   }
 
@@ -226,18 +328,29 @@ export async function generateSegmentTts(
     transport = options.transport ?? createGeminiTtsTransport(apiKey);
   } catch (err) {
     const providerErr = classifyGeminiTtsError(err);
-    return mapProviderFailure(providerErr, baseMeta(0));
+    return mapProviderFailure(
+      providerErr,
+      makeMeta(0, requestedModel, false, 0, providerErr.quotaClass),
+      providerErr.quotaClass,
+      providerErr.retryAfterSeconds,
+    );
   }
 
+  const routedDirectlyToFallback = routePreference === "fallback" && distinctFallbackModel !== null;
+  let activeModel: string = routedDirectlyToFallback ? distinctFallbackModel : requestedModel;
+  let fallbackUsed = routedDirectlyToFallback;
+  let modelSwitches = 0;
   let providerAttempts = 0;
   let regenerations = 0;
+  let primaryQuotaClass: TtsQuotaClass = "none";
+  let primaryRetryAfterSeconds: number | undefined;
 
   while (providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS) {
     providerAttempts += 1;
 
     try {
       const rawAudio = await transport({
-        model: requestedModel,
+        model: activeModel,
         text: request.text,
         voice: profile.voice,
         styleInstruction: profile.styleInstruction,
@@ -260,7 +373,19 @@ export async function generateSegmentTts(
             regenerations += 1;
             continue;
           }
-          return mapProviderFailure(mapped.error, baseMeta(providerAttempts));
+          return mapProviderFailure(
+            mapped.error,
+            makeMeta(
+              providerAttempts,
+              activeModel,
+              fallbackUsed,
+              modelSwitches,
+              primaryQuotaClass,
+              primaryRetryAfterSeconds,
+            ),
+            primaryQuotaClass,
+            primaryRetryAfterSeconds,
+          );
         }
         throw inspectErr;
       }
@@ -272,7 +397,14 @@ export async function generateSegmentTts(
         audio: inspected.metadata,
         profile,
         meta: {
-          ...baseMeta(providerAttempts),
+          ...makeMeta(
+            providerAttempts,
+            activeModel,
+            fallbackUsed,
+            modelSwitches,
+            primaryQuotaClass,
+            primaryRetryAfterSeconds,
+          ),
           byteLength: inspected.metadata.byteLength,
           durationMs: inspected.metadata.durationMs,
           container: inspected.metadata.container,
@@ -280,6 +412,7 @@ export async function generateSegmentTts(
       };
     } catch (err) {
       const providerErr = classifyGeminiTtsError(err, Boolean(options.signal?.aborted));
+
       if (
         providerErr.kind === "empty_audio" &&
         regenerations < MAX_TTS_REGENERATION_ATTEMPTS &&
@@ -289,7 +422,47 @@ export async function generateSegmentTts(
         regenerations += 1;
         continue;
       }
-      return mapProviderFailure(providerErr, baseMeta(providerAttempts));
+
+      if (
+        !routedDirectlyToFallback &&
+        activeModel === requestedModel &&
+        distinctFallbackModel !== null &&
+        modelSwitches < MAX_TTS_MODEL_SWITCHES &&
+        isTtsCapacityFallbackEligible(providerErr) &&
+        providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS &&
+        !options.signal?.aborted
+      ) {
+        if (providerErr.quotaClass !== "none") {
+          primaryQuotaClass = providerErr.quotaClass;
+        }
+        if (providerErr.retryAfterSeconds !== undefined) {
+          primaryRetryAfterSeconds = providerErr.retryAfterSeconds;
+        }
+        modelSwitches += 1;
+        fallbackUsed = true;
+        activeModel = distinctFallbackModel;
+        continue;
+      }
+
+      const finalQuotaClass: TtsQuotaClass =
+        providerErr.quotaClass !== "none" ? providerErr.quotaClass : primaryQuotaClass;
+      const finalRetryAfterSeconds =
+        providerErr.retryAfterSeconds ??
+        (providerErr.kind === "rate_limited" ? undefined : primaryRetryAfterSeconds);
+
+      return mapProviderFailure(
+        providerErr,
+        makeMeta(
+          providerAttempts,
+          activeModel,
+          fallbackUsed,
+          modelSwitches,
+          finalQuotaClass,
+          finalRetryAfterSeconds,
+        ),
+        finalQuotaClass,
+        finalRetryAfterSeconds,
+      );
     }
   }
 
@@ -298,6 +471,13 @@ export async function generateSegmentTts(
     "TTS_AUDIO_INVALID",
     "Voice generation could not produce playable audio. Captions remain active—please try again.",
     true,
-    baseMeta(providerAttempts),
+    makeMeta(
+      providerAttempts,
+      activeModel,
+      fallbackUsed,
+      modelSwitches,
+      primaryQuotaClass,
+      primaryRetryAfterSeconds,
+    ),
   );
 }
