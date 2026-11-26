@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test:schema": "node scripts/test-schema.mjs",
     "test:generation": "node scripts/test-gemini-generation.mjs",
-    "test:tts": "node scripts/test-tts.mjs"
+    "test:tts": "node scripts/test-tts.mjs",
+    "test:audio-queue": "node scripts/test-audio-queue.mjs"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",

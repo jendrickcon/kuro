@@ -11,6 +11,7 @@ export interface CaptionPanelProps {
   previousHost: Host | undefined;
   status: PlaybackStatus;
   audioAvailability: AudioAvailability;
+  segmentAudioFailed?: boolean;
   onReplay: () => void;
 }
 
@@ -23,6 +24,7 @@ export function CaptionPanel({
   previousHost,
   status,
   audioAvailability,
+  segmentAudioFailed = false,
   onReplay,
 }: CaptionPanelProps) {
   const speakerName = activeHost?.name ?? currentSegment.speakerId;
@@ -30,8 +32,9 @@ export function CaptionPanel({
   const accentColor = activeHost?.accentColor ?? "#1d4ed8";
   const panelStyle = { borderLeftColor: accentColor } as CSSProperties;
   const segmentMissingAudio =
-    audioAvailability === "partial" &&
-    !(typeof currentSegment.audioUrl === "string" && currentSegment.audioUrl.trim().length > 0);
+    segmentAudioFailed ||
+    (audioAvailability === "partial" &&
+      !(typeof currentSegment.audioUrl === "string" && currentSegment.audioUrl.trim().length > 0));
 
   return (
     <section

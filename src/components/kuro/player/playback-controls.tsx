@@ -1,10 +1,13 @@
 import type { Episode } from "@contracts/episode.schema";
 import type { PlaybackStatus } from "@/hooks/use-episode-playback";
+import type { EpisodeAudioMode, EpisodePlaybackStatus } from "@/lib/tts/episode-audio-queue-engine";
 import { TranscriptDownload } from "@/components/kuro/player/transcript-download";
 
 export interface PlaybackControlsProps {
   episode: Episode;
   status: PlaybackStatus;
+  audioStatus?: EpisodePlaybackStatus;
+  audioMode?: EpisodeAudioMode;
   currentSegmentIndex: number;
   totalSegments: number;
   playbackProgress: number;
@@ -19,6 +22,8 @@ export interface PlaybackControlsProps {
 export function PlaybackControls({
   episode,
   status,
+  audioStatus,
+  audioMode = "hosted",
   currentSegmentIndex,
   totalSegments,
   playbackProgress,
@@ -29,14 +34,25 @@ export function PlaybackControls({
   onNext,
   onRestart,
 }: PlaybackControlsProps) {
+  const isPreparing = audioStatus === "preparing";
   const isPlaying = status === "playing";
   const isComplete = status === "complete";
-  const primaryLabel = isPlaying ? "Pause" : isComplete ? "Replay" : "Play";
-  const primaryAriaLabel = isPlaying
-    ? "Pause playback"
-    : isComplete
-      ? "Replay episode from turn 1"
-      : "Play timed preview";
+  const primaryLabel = isPreparing
+    ? "Preparing…"
+    : isPlaying
+      ? "Pause"
+      : isComplete
+        ? "Replay"
+        : "Play";
+  const primaryAriaLabel = isPreparing
+    ? "Pause audio preparation"
+    : isPlaying
+      ? "Pause playback"
+      : isComplete
+        ? "Replay episode from turn 1"
+        : audioMode === "timed-fallback"
+          ? "Play timed captions"
+          : "Play hosted episode audio";
 
   return (
     <section
