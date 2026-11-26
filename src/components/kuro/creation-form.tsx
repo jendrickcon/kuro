@@ -143,10 +143,10 @@ export function CreationForm({
             onSelect={onToneChange}
           />
           <OptionSelector
-            legend="Hosts"
+            legend="Kuromates"
             options={[
-              { value: 2, label: "2 hosts" },
-              { value: 3, label: "3 hosts" },
+              { value: 2, label: "2 Kuromates" },
+              { value: 3, label: "3 Kuromates" },
             ]}
             selected={hostCount}
             disabled={isSubmitting}
@@ -185,7 +185,8 @@ export function CreationForm({
         </div>
 
         <p className="text-xs text-slate-600">
-          Current build uses the mock WP-004 episode service and returns validated sample episodes.
+          Generates a validated Kuromate conversation script via Gemini when configured, or open
+          Try sample episode for an instant local walkthrough.
         </p>
       </form>
     </div>

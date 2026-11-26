@@ -11,9 +11,11 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:schema": "node scripts/test-schema.mjs"
+    "test:schema": "node scripts/test-schema.mjs",
+    "test:generation": "node scripts/test-gemini-generation.mjs"
   },
   "dependencies": {
+    "@google/genai": "^3.6.1",
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",

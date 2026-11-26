@@ -20,7 +20,8 @@ import { getSampleEpisode } from "@/lib/episode/fixtures";
 interface ResultState {
   instanceId: number;
   episode: Episode;
-  source: "mock" | "sample";
+  source: "generated" | "mock" | "sample";
+  usedFallback?: boolean;
   requestedOptions?: {
     tone: Tone;
     length: EpisodeLength;
@@ -154,23 +155,26 @@ export function KuroSkeleton() {
       const episodeCheck = EpisodeSchema.safeParse(parsed.data.episode);
       if (!episodeCheck.success) {
         setRequestError({
-          message: "The returned mock episode could not be verified. Please try again.",
+          message: "The returned episode could not be verified. Please try again.",
           retryable: true,
         });
         focusErrorCard();
         return;
       }
 
+      const usedFallback = response.headers.get("x-kuro-fallback-used") === "true";
+      const source = episodeCheck.data.status === "ready" ? "generated" : "mock";
       episodeCounterRef.current += 1;
       setResult({
         instanceId: episodeCounterRef.current,
         episode: episodeCheck.data,
-        source: "mock",
+        source,
+        usedFallback: source === "generated" ? usedFallback : false,
         requestedOptions: { tone, length, hostCount },
       });
     } catch {
       setRequestError({
-        message: "Could not reach the mock episode service. Check your connection and try again.",
+        message: "Could not reach the episode service. Check your connection and try again.",
         retryable: true,
       });
       focusErrorCard();
@@ -204,6 +208,7 @@ export function KuroSkeleton() {
         key={result.instanceId}
         episode={result.episode}
         source={result.source}
+        usedFallback={result.usedFallback}
         requestedOptions={result.requestedOptions}
         onBack={handleBackToForm}
       />
@@ -223,6 +228,7 @@ export function KuroSkeleton() {
             setRequestError(null);
             focusTextarea();
           }}
+          onTrySample={handleTrySample}
         />
       ) : null}
       <CreationForm

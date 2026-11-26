@@ -9,7 +9,8 @@ import { PodcastStage } from "@/components/kuro/player/podcast-stage";
 
 export interface EpisodePlayerProps {
   episode: Episode;
-  source: "mock" | "sample";
+  source: "generated" | "mock" | "sample";
+  usedFallback?: boolean;
   requestedOptions?: {
     tone: Tone;
     length: EpisodeLength;
@@ -25,6 +26,7 @@ export interface EpisodePlayerProps {
 export function EpisodePlayer({
   episode,
   source,
+  usedFallback,
   requestedOptions,
   onBack,
 }: EpisodePlayerProps) {
@@ -40,11 +42,21 @@ export function EpisodePlayer({
       <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 shadow-xs sm:px-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-950">
-              {source === "sample" ? "Sample episode" : "Mock episode"}
+            <span
+              className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
+                source === "generated"
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-950"
+                  : "border-amber-300 bg-amber-50 text-amber-950"
+              }`}
+            >
+              {source === "sample"
+                ? "Sample episode"
+                : source === "generated"
+                  ? "Generated episode"
+                  : "Mock episode"}
             </span>
             <span className="text-xs font-semibold capitalize text-slate-700">
-              {episode.tone} · {episode.length} · {episode.hosts.length} hosts ·{" "}
+              {episode.tone} · {episode.length} · {episode.hosts.length} Kuromates ·{" "}
               {episode.segments.length} turns
             </span>
           </div>
@@ -67,6 +79,7 @@ export function EpisodePlayer({
 
       <PlayerNotice
         source={source}
+        usedFallback={usedFallback}
         episode={episode}
         requestedOptions={requestedOptions}
         audioAvailability={playback.audioAvailability}

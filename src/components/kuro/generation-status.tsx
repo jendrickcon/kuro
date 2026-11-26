@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 
 const WAITING_MESSAGES = [
-  "Preparing the conversation...",
-  "Arranging host perspectives...",
-  "Preparing the preview...",
+  "Preparing your conversation...",
+  "Building the Kuromate discussion...",
+  "Validating the episode...",
 ] as const;
 
 export function GenerationStatus() {
@@ -14,7 +14,7 @@ export function GenerationStatus() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       setStepIndex((prev) => (prev + 1) % WAITING_MESSAGES.length);
-    }, 600);
+    }, 1100);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -33,12 +33,12 @@ export function GenerationStatus() {
           <p className="text-sm font-semibold text-slate-950">{WAITING_MESSAGES[stepIndex]}</p>
         </div>
         <span className="rounded-full border border-blue-300 bg-white px-2.5 py-0.5 text-[11px] font-semibold text-blue-900">
-          Mock mode
+          Working
         </span>
       </div>
       <p className="mt-1.5 text-xs text-slate-700">
-        Loading a validated mock episode from the WP-004 API. Live Gemini generation and TTS are not
-        connected yet.
+        Sending your topic to the Kuro script service. Hosted Kuromate voices connect in a later
+        stage.
       </p>
     </section>
   );

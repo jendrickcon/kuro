@@ -3,6 +3,10 @@ import {
   CreateEpisodeRequestSchema,
   CreateEpisodeResponseSchema,
 } from "@contracts/episode.schema";
+import {
+  generateGeminiEpisode,
+  resolveGenerationMode,
+} from "@/lib/episode/gemini-service";
 import { createMockEpisode } from "@/lib/episode/mock-service";
 
 function invalidInputResponse(message: string) {
@@ -34,14 +38,31 @@ export async function POST(request: Request) {
     );
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 350));
+  if (resolveGenerationMode(process.env) === "mock") {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const episode = createMockEpisode(parsed.data);
+    return NextResponse.json(
+      CreateEpisodeResponseSchema.parse({
+        ok: true,
+        episode,
+      }),
+      { status: 200 },
+    );
+  }
 
-  const episode = createMockEpisode(parsed.data);
-  return NextResponse.json(
-    CreateEpisodeResponseSchema.parse({
-      ok: true,
-      episode,
+  const result = await generateGeminiEpisode(parsed.data);
+  console.info(
+    "[kuro/episodes]",
+    JSON.stringify({
+      httpStatus: result.httpStatus,
+      ...result.meta,
     }),
-    { status: 200 },
   );
+
+  return NextResponse.json(result.response, {
+    status: result.httpStatus,
+    headers: {
+      "X-Kuro-Fallback-Used": result.meta.fallbackUsed ? "true" : "false",
+    },
+  });
 }
