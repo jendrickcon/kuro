@@ -2,6 +2,8 @@
 
 **Kuro** (*More voices. Clearer ideas.*) transforms a difficult college topic, class reading, or pasted study material into an engaging multi-host conversation with dynamic `hosts[]` (`2` or `3`), synchronized captions, contextual visuals, and accessible controls.
 
+> Kuro’s conversational hosts are called Kuromates. “Kuromate” is singular and “Kuromates” is plural.
+
 ## Current Milestone Status
 
 - **Main (`Verified`):** Production creation flow and multi-host timed preview player (`WP-001`–`WP-007` + `WP-008.5`).

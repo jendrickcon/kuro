@@ -13,10 +13,10 @@
 - **Player components (`src/components/kuro/player/`):**
   - `stage-theme.ts`: Lightweight `StageTheme = "contemporary"` boundary (Contemporary Studio default).
   - `contextual-monitor.tsx`: Back-wall studio monitor validating cues via `VisualCueSchema.safeParse()` with safe `NoVisual` fallback and dev-only warning.
-  - `kurozo-host.tsx`: Original flat-motion CSS geometric Kurozos rendered dynamically from `episode.hosts[]` with 6 role crests (`explainer`, `learner`, `skeptic`, `storyteller`, `specialist`, `moderator`), per-host mics/LEDs, overhead wall stage-light emphasis, posture/look states, and **zero containment halos**.
+  - `kuromate-host.tsx`: Original flat-motion CSS geometric Kuromates rendered dynamically from `episode.hosts[]` with 6 role crests (`explainer`, `learner`, `skeptic`, `storyteller`, `specialist`, `moderator`), per-host mics/LEDs, overhead wall stage-light emphasis, posture/look states, and **zero containment halos**.
   - `podcast-stage.tsx`: Unified studio wall, HUD (`STANDBY`/`● ON AIR`/`PAUSED`/`COMPLETE`, `KURO STUDIO`, turn counter), upper wall monitor above hosts, closer/larger host seats behind curved shared desk, and aligned desk nameplates.
   - `caption-panel.tsx`, `playback-controls.tsx`, `transcript-download.tsx`, `player-notice.tsx`, `episode-player.tsx`: Synchronized `aria-live` captions, previous turn line, completion banner/replay, `44px+` transport/download controls (`Blob` + revoked `objectURL`), and honest timed/mock disclosures.
-- **App wiring:** Updated `src/app/globals.css`, `src/app/page.tsx`, `src/components/kuro/kurozo-preview.tsx` (reads fixture `hosts[]` instead of hard-coded names), and `src/components/kuro/kuro-skeleton.tsx`.
+- **App wiring:** Updated `src/app/globals.css`, `src/app/page.tsx`, `src/components/kuro/kuromate-preview.tsx` (reads fixture `hosts[]` instead of hard-coded names), and `src/components/kuro/kuro-skeleton.tsx`.
 
 ## 3. Verification & Observed Results
 - **Quality checks:** `npm install` (lockfile unchanged), `npm run typecheck`, `npm run lint`, `npm run test:schema` (11/11), and `npm run build` all passed with exit code `0`; built CSS confirmed `@media (prefers-reduced-motion:reduce)`.

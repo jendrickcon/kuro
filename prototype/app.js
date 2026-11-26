@@ -301,14 +301,14 @@
     btnBackCreate: document.getElementById("btn-back-create"),
     createStudioPreview: document.getElementById("create-studio-preview"),
     createEnvBadge: document.getElementById("create-env-badge"),
-    createKurozoStage: document.getElementById("create-kurozo-stage"),
+    createKuromateStage: document.getElementById("create-kuromate-stage"),
     createForm: document.getElementById("create-form"),
     topicInput: document.getElementById("topic-input"),
     charCounter: document.getElementById("char-counter"),
     formError: document.getElementById("form-error"),
     btnUseExample: document.getElementById("btn-use-example"),
     btnTrySample: document.getElementById("btn-try-sample"),
-    prepKurozoRow: document.getElementById("prep-kurozo-row"),
+    prepKuromateRow: document.getElementById("prep-kuromate-row"),
     prepHeading: document.getElementById("prep-heading"),
     prepSteps: [
       document.getElementById("prep-step-0"),
@@ -354,64 +354,64 @@
     return count === 3 ? SAMPLE_EPISODES.threeHostDetailed.hosts : SAMPLE_EPISODES.twoHostQuick.hosts;
   }
 
-  function buildKurozoBody(host) {
+  function buildKuromateBody(host) {
     const rig = document.createElement("div");
-    rig.className = `kurozo-rig kurozo--${host.variant || "explainer"}`;
+    rig.className = `kuromate-rig kuromate--${host.variant || "explainer"}`;
     rig.setAttribute("aria-hidden", "true");
 
     const upper = document.createElement("div");
-    upper.className = "kurozo-upper";
+    upper.className = "kuromate-upper";
 
     const crest = document.createElement("div");
-    crest.className = "kurozo-crest";
+    crest.className = "kuromate-crest";
 
     const head = document.createElement("div");
-    head.className = "kurozo-head";
+    head.className = "kuromate-head";
 
     const eyes = document.createElement("div");
-    eyes.className = "kurozo-eyes";
+    eyes.className = "kuromate-eyes";
     const eyeL = document.createElement("span");
-    eyeL.className = "kurozo-eye";
+    eyeL.className = "kuromate-eye";
     const eyeR = document.createElement("span");
-    eyeR.className = "kurozo-eye";
+    eyeR.className = "kuromate-eye";
     eyes.append(eyeL, eyeR);
 
     const mouth = document.createElement("div");
-    mouth.className = "kurozo-mouth";
+    mouth.className = "kuromate-mouth";
     for (let i = 0; i < 3; i += 1) {
       const bar = document.createElement("span");
-      bar.className = "kurozo-wave-bar";
+      bar.className = "kuromate-wave-bar";
       mouth.appendChild(bar);
     }
 
     head.append(eyes, mouth);
 
     const torsoWrap = document.createElement("div");
-    torsoWrap.className = "kurozo-torso-wrap";
+    torsoWrap.className = "kuromate-torso-wrap";
 
     const armL = document.createElement("span");
-    armL.className = "kurozo-arm kurozo-arm--left";
+    armL.className = "kuromate-arm kuromate-arm--left";
     const handL = document.createElement("span");
-    handL.className = "kurozo-hand";
+    handL.className = "kuromate-hand";
     armL.appendChild(handL);
 
     const torso = document.createElement("div");
-    torso.className = "kurozo-torso";
+    torso.className = "kuromate-torso";
     const core = document.createElement("span");
-    core.className = "kurozo-core-badge";
+    core.className = "kuromate-core-badge";
     torso.appendChild(core);
 
     const armR = document.createElement("span");
-    armR.className = "kurozo-arm kurozo-arm--right";
+    armR.className = "kuromate-arm kuromate-arm--right";
     const handR = document.createElement("span");
-    handR.className = "kurozo-hand";
+    handR.className = "kuromate-hand";
     armR.appendChild(handR);
 
     torsoWrap.append(armL, torso, armR);
     upper.append(crest, head, torsoWrap);
 
     const lower = document.createElement("div");
-    lower.className = "kurozo-lower";
+    lower.className = "kuromate-lower";
 
     rig.append(upper, lower);
     return rig;
@@ -421,29 +421,29 @@
     const meta = ENV_META[state.environment] || ENV_META.studio;
     el.createStudioPreview.dataset.env = state.environment;
     el.createEnvBadge.textContent = meta.label;
-    el.createKurozoStage.replaceChildren();
+    el.createKuromateStage.replaceChildren();
 
     getHostsForCount(state.hostCount).forEach((host) => {
       const unit = document.createElement("div");
       unit.className = "mini-host-unit";
       unit.style.setProperty("--host-accent", host.accentColor);
-      const rig = buildKurozoBody(host);
+      const rig = buildKuromateBody(host);
       const tag = document.createElement("span");
       tag.className = "mini-host-tag";
       tag.textContent = host.name;
       unit.append(rig, tag);
-      el.createKurozoStage.appendChild(unit);
+      el.createKuromateStage.appendChild(unit);
     });
   }
 
-  function renderEmbodiedKurozo(host, hostState, lookDir) {
+  function renderEmbodiedKuromate(host, hostState, lookDir) {
     const seat = document.createElement("div");
     seat.className = "host-seat";
     seat.dataset.state = hostState;
     seat.dataset.look = lookDir;
     seat.style.setProperty("--host-accent", host.accentColor);
 
-    const rig = buildKurozoBody(host);
+    const rig = buildKuromateBody(host);
 
     const mic = document.createElement("div");
     mic.className = "studio-mic";
@@ -716,7 +716,7 @@
     const activeHost = ep.hosts[activeSeatIdx] || ep.hosts[0];
 
     el.episodeTitle.textContent = ep.title;
-    el.episodeMeta.textContent = `${ep.tone} · ${ep.length} · ${ep.hosts.length} Kurozos · ${total} turns`;
+    el.episodeMeta.textContent = `${ep.tone} · ${ep.length} · ${ep.hosts.length} Kuromates · ${total} turns`;
     el.episodeTopicNote.textContent = state.submittedNote
       ? `Sample conversation loaded for your input: "${state.submittedNote}" (no AI generated from your text).`
       : `Prewritten sample conversation (${ep.topic}).`;
@@ -756,7 +756,7 @@
     const pad = (n) => String(n).padStart(2, "0");
     el.studioTurnHud.textContent = `${pad(idx + 1)} / ${pad(total)}`;
 
-    // Embodied Kurozos + aligned desk nameplates
+    // Embodied Kuromates + aligned desk nameplates
     el.hostStage.className = `studio-hosts ${ep.hosts.length === 3 ? "studio-hosts--3" : "studio-hosts--2"}`;
     el.hostStage.replaceChildren();
     el.deskNameplates.replaceChildren();
@@ -782,7 +782,7 @@
         lookDir = activeSeatIdx < seatIdx ? "left" : activeSeatIdx > seatIdx ? "right" : "center";
       }
 
-      el.hostStage.appendChild(renderEmbodiedKurozo(host, hostState, lookDir));
+      el.hostStage.appendChild(renderEmbodiedKuromate(host, hostState, lookDir));
       el.deskNameplates.appendChild(renderDeskNameplate(host, hostState));
     });
 
@@ -977,17 +977,17 @@
     cancelAllPlaybackActivity();
     setView("preparing");
 
-    el.prepKurozoRow.replaceChildren();
+    el.prepKuromateRow.replaceChildren();
     ep.hosts.forEach((h) => {
       const wrap = document.createElement("div");
       wrap.style.setProperty("--host-accent", h.accentColor);
-      wrap.appendChild(buildKurozoBody(h));
-      el.prepKurozoRow.appendChild(wrap);
+      wrap.appendChild(buildKuromateBody(h));
+      el.prepKuromateRow.appendChild(wrap);
     });
 
     const messages = [
-      "Gathering your Kurozos",
-      "Assigning each Kurozo a perspective",
+      "Gathering your Kuromates",
+      "Assigning each Kuromate a perspective",
       "Preparing the sample conversation",
     ];
     el.prepHeading.textContent = messages[0];
@@ -1021,7 +1021,7 @@
       "Kuro — Interactive Prototype Transcript",
       `Title: ${ep.title}`,
       `Topic: ${state.submittedNote || ep.topic}`,
-      `Options: ${ep.tone} | ${ep.length} | ${ep.hosts.length} Kurozos`,
+      `Options: ${ep.tone} | ${ep.length} | ${ep.hosts.length} Kuromates`,
       "",
       "Hosts:",
       ...ep.hosts.map((h) => `- ${h.name} (${h.role})`),

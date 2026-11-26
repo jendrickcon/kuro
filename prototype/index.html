@@ -34,19 +34,19 @@
         <div id="create-studio-preview" class="mini-studio-card" data-env="studio">
           <div class="mini-studio-top">
             <div>
-              <h2 id="create-heading" class="section-heading">Meet your Kurozos</h2>
+              <h2 id="create-heading" class="section-heading">Meet your Kuromates</h2>
               <p class="section-subtitle">
                 Each host brings a different role and perspective to the conversation.
               </p>
             </div>
             <span id="create-env-badge" class="env-pill">Studio</span>
           </div>
-          <div class="mini-studio-scene" aria-label="Miniature shared Kurozo studio preview">
+          <div class="mini-studio-scene" aria-label="Miniature shared Kuromate studio preview">
             <div class="mini-monitor" aria-hidden="true">
               <span class="mini-monitor-dot"></span>
               <span>KURO MONITOR</span>
             </div>
-            <div id="create-kurozo-stage" class="mini-kurozo-row"></div>
+            <div id="create-kuromate-stage" class="mini-kuromate-row"></div>
             <div class="mini-desk" aria-hidden="true"></div>
           </div>
         </div>
@@ -101,13 +101,13 @@
             </fieldset>
 
             <fieldset class="option-fieldset">
-              <legend class="option-legend">Choose 2 or 3 Kurozos</legend>
+              <legend class="option-legend">Choose 2 or 3 Kuromates</legend>
               <div class="pill-row">
                 <button type="button" class="pill-btn" data-option="hostCount" data-value="2" aria-pressed="true">
-                  ✓ 2 Kurozos
+                  ✓ 2 Kuromates
                 </button>
                 <button type="button" class="pill-btn" data-option="hostCount" data-value="3" aria-pressed="false">
-                  3 Kurozos
+                  3 Kuromates
                 </button>
               </div>
             </fieldset>
@@ -145,14 +145,14 @@
       <!-- VIEW 2: SIMULATED PREPARATION -->
       <section id="view-preparing" class="view-section" aria-labelledby="prep-heading" hidden>
         <div class="card prep-card" role="status" aria-live="polite">
-          <div id="prep-kurozo-row" class="prep-kurozo-row" aria-hidden="true"></div>
-          <h2 id="prep-heading" class="prep-title">Gathering your Kurozos</h2>
+          <div id="prep-kuromate-row" class="prep-kuromate-row" aria-hidden="true"></div>
+          <h2 id="prep-heading" class="prep-title">Gathering your Kuromates</h2>
           <p id="prep-subtitle" class="prep-subtitle">
             Loading a local sample conversation for your selected options.
           </p>
           <ol class="prep-steps" aria-label="Preparation progress">
-            <li id="prep-step-0" class="prep-step" data-step-state="active">Gathering your Kurozos</li>
-            <li id="prep-step-1" class="prep-step" data-step-state="pending">Assigning each Kurozo a perspective</li>
+            <li id="prep-step-0" class="prep-step" data-step-state="active">Gathering your Kuromates</li>
+            <li id="prep-step-1" class="prep-step" data-step-state="pending">Assigning each Kuromate a perspective</li>
             <li id="prep-step-2" class="prep-step" data-step-state="pending">Preparing the sample conversation</li>
           </ol>
           <button type="button" id="btn-cancel-prep" class="btn btn-secondary">
@@ -167,19 +167,19 @@
           <div class="episode-meta-block">
             <div class="episode-badges">
               <span class="sample-pill">Sample conversation</span>
-              <span id="episode-meta" class="episode-meta">Casual · Quick · 2 Kurozos</span>
+              <span id="episode-meta" class="episode-meta">Casual · Quick · 2 Kuromates</span>
             </div>
             <h2 id="episode-title" class="episode-title">Episode Title</h2>
             <p id="episode-topic-note" class="episode-topic-note"></p>
           </div>
 
           <div class="player-switchers">
-            <div class="sample-switcher" role="group" aria-label="Switch sample Kurozo count">
+            <div class="sample-switcher" role="group" aria-label="Switch sample Kuromate count">
               <button type="button" id="btn-switch-2" class="btn btn-subtle btn-compact" aria-pressed="true">
-                2 Kurozos
+                2 Kuromates
               </button>
               <button type="button" id="btn-switch-3" class="btn btn-subtle btn-compact" aria-pressed="false">
-                3 Kurozos
+                3 Kuromates
               </button>
             </div>
             <div class="env-switcher" role="group" aria-label="Prototype environment preview">
@@ -222,7 +222,7 @@
           </div>
 
           <div id="studio-set-body" class="studio-set-body">
-            <div id="host-stage" class="studio-hosts" aria-label="Kurozo hosts"></div>
+            <div id="host-stage" class="studio-hosts" aria-label="Kuromate hosts"></div>
 
             <aside id="studio-monitor" class="studio-monitor" aria-label="Studio monitor contextual visual">
               <div class="monitor-bezel-top">
@@ -257,7 +257,7 @@
           <p id="caption-prev" class="caption-prev" hidden></p>
           <div id="completion-banner" class="completion-banner" role="status" aria-live="polite" hidden>
             <p class="completion-text">
-              Sample conversation complete. All Kurozos have returned to idle.
+              Sample conversation complete. All Kuromates have returned to idle.
             </p>
             <button type="button" id="btn-replay-banner" class="btn btn-primary btn-compact">
               Replay episode

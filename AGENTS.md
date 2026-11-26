@@ -1,6 +1,6 @@
 # AGENTS.md — Collaboration & Repository Operating Guide
 
-Read [README.md](./README.md) and [SPEC.md](./SPEC.md) before starting work. Keep the product name strictly **Kuro** (never `Kuro AI`, `KuroCast`, or `Klaro`) and the tagline strictly **"More voices. Clearer ideas."**
+Read [README.md](./README.md) and [SPEC.md](./SPEC.md) before starting work. Keep the product name strictly **Kuro** (never `Kuro AI`, `KuroCast`, or `Klaro`), the tagline strictly **"More voices. Clearer ideas."**, and host characters strictly **Kuromate** (singular) / **Kuromates** (plural).
 
 ## 1. Team Lanes & Agent Families
 
