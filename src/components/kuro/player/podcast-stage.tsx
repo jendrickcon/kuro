@@ -11,6 +11,7 @@ import {
 
 const HOST_STATE_LABELS: Record<KuromateHostState, string> = {
   speaking: "● Speaking",
+  captioning: "Captioning",
   listening: "Listening",
   reacting: "Reacting",
   paused: "Paused",
@@ -43,6 +44,8 @@ export interface PodcastStageProps {
   currentSegmentIndex: number;
   status: PlaybackStatus;
   reactionHostId: string | null;
+  isSilentFallback?: boolean;
+  isPreparingAudio?: boolean;
   theme?: StageTheme;
 }
 
@@ -56,6 +59,8 @@ export function PodcastStage({
   currentSegmentIndex,
   status,
   reactionHostId,
+  isSilentFallback = false,
+  isPreparingAudio = false,
   theme = DEFAULT_STAGE_THEME,
 }: PodcastStageProps) {
   const hostCount: 2 | 3 = episode.hosts.length === 3 ? 3 : 2;
@@ -64,14 +69,27 @@ export function PodcastStage({
     episode.hosts.findIndex((host) => host.id === currentSegment.speakerId),
   );
   const themeMeta = STAGE_THEME_META[theme];
-  const airBadge = AIR_BADGES[status];
+  const airBadge = isPreparingAudio
+    ? {
+        text: "PREPARING",
+        toneClass: "border-blue-300 bg-blue-700 text-white",
+      }
+    : status === "playing" && isSilentFallback
+      ? {
+          text: "TIMED CAPTIONS",
+          toneClass: "border-amber-300 bg-amber-600 text-white",
+        }
+      : AIR_BADGES[status];
   const paddedTurn = String(currentSegmentIndex + 1).padStart(2, "0");
   const paddedTotal = String(episode.segments.length).padStart(2, "0");
 
   function resolveHostState(hostId: string): KuromateHostState {
+    if (isPreparingAudio) return "idle";
     if (status === "complete") return "complete";
     if (status === "playing") {
-      if (hostId === currentSegment.speakerId) return "speaking";
+      if (hostId === currentSegment.speakerId) {
+        return isSilentFallback ? "captioning" : "speaking";
+      }
       if (reactionHostId === hostId) return "reacting";
       return "listening";
     }
@@ -128,7 +146,7 @@ export function PodcastStage({
         <ContextualMonitor
           visualCue={currentSegment.visualCue}
           episodeTitle={episode.title}
-          isPlaying={status === "playing"}
+          isPlaying={status === "playing" && !isSilentFallback && !isPreparingAudio}
           monitorLabel={themeMeta.monitorLabel}
         />
       </div>
@@ -164,6 +182,7 @@ export function PodcastStage({
           {episode.hosts.map((host) => {
             const hostState = resolveHostState(host.id);
             const isSpeaking = hostState === "speaking";
+            const isCaptioning = hostState === "captioning";
             const isPausedSpeaker = hostState === "paused";
             const statusText = HOST_STATE_LABELS[hostState];
             const accentStyle = { "--kuromate-accent": host.accentColor } as CSSProperties;
@@ -176,9 +195,11 @@ export function PodcastStage({
                 className={`kuro-nameplate min-w-0 rounded-lg border px-1.5 py-1.5 text-center transition-colors sm:px-3 sm:py-2 ${
                   isSpeaking
                     ? "border-white/90 bg-white/15"
-                    : isPausedSpeaker
-                      ? "border-slate-300/70 bg-white/10"
-                      : "border-white/15 bg-white/5"
+                    : isCaptioning
+                      ? "border-amber-300/80 bg-white/10"
+                      : isPausedSpeaker
+                        ? "border-slate-300/70 bg-white/10"
+                        : "border-white/15 bg-white/5"
                 }`}
               >
                 <span
@@ -186,7 +207,7 @@ export function PodcastStage({
                   className="mx-auto mb-1 block h-1 w-8 rounded-full transition-opacity sm:w-12"
                   style={{
                     backgroundColor: host.accentColor,
-                    opacity: isSpeaking || isPausedSpeaker ? 1 : 0.45,
+                    opacity: isSpeaking || isCaptioning || isPausedSpeaker ? 1 : 0.45,
                   }}
                 />
                 <p
@@ -204,9 +225,11 @@ export function PodcastStage({
                   style={
                     isSpeaking
                       ? { backgroundColor: host.accentColor, color: "#ffffff" }
-                      : isPausedSpeaker
-                        ? { backgroundColor: "#ffffff", color: "#0f172a" }
-                        : { backgroundColor: "rgba(255,255,255,0.12)", color: "#e2e8f0" }
+                      : isCaptioning
+                        ? { backgroundColor: "#fef3c7", color: "#78350f" }
+                        : isPausedSpeaker
+                          ? { backgroundColor: "#ffffff", color: "#0f172a" }
+                          : { backgroundColor: "rgba(255,255,255,0.12)", color: "#e2e8f0" }
                   }
                 >
                   {statusText}

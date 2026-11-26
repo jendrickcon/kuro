@@ -1,0 +1,841 @@
+import fs from "node:fs";
+import module from "node:module";
+import path from "node:path";
+import { execSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function resolveAliasTarget(specifier) {
+  let rel = null;
+  if (specifier.startsWith("@/")) {
+    rel = path.join("src", specifier.slice(2));
+  } else if (specifier.startsWith("@contracts/")) {
+    rel = path.join("contracts", specifier.slice("@contracts/".length));
+  } else if (specifier.startsWith("@fixtures/")) {
+    rel = path.join("fixtures", specifier.slice("@fixtures/".length));
+  }
+  if (!rel) return null;
+  for (const candidate of [rel, `${rel}.ts`, `${rel}.tsx`, path.join(rel, "index.ts")]) {
+    const abs = path.join(root, candidate);
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      return pathToFileURL(abs).href;
+    }
+  }
+  return null;
+}
+
+module.registerHooks({
+  resolve(specifier, context, nextResolve) {
+    const mapped = resolveAliasTarget(specifier);
+    if (mapped) {
+      return { url: mapped, shortCircuit: true };
+    }
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url.endsWith(".json")) {
+      return {
+        format: "json",
+        shortCircuit: true,
+        source: fs.readFileSync(new URL(url), "utf8"),
+      };
+    }
+    return nextLoad(url, context);
+  },
+});
+
+const { deriveUnifiedLoadingView } = await import("../src/lib/episode/unified-loading-state.ts");
+const {
+  createEpisodeAudioQueueEngine,
+  INITIAL_AUDIO_BUFFER_SIZE,
+  MAX_AUTOMATIC_CAPACITY_RETRIES_PER_SEGMENT,
+  MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT,
+  MAX_AUTOMATIC_PROVIDER_CALLS_PER_SEGMENT,
+  MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE,
+  MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE,
+  MAX_TTS_CONCURRENCY,
+  MIN_TTS_REQUEST_INTERVAL_MS,
+  PREFETCH_LOOKAHEAD,
+  resolveTtsRequestIntervalMs,
+} = await import("../src/lib/tts/episode-audio-queue-engine.ts");
+const {
+  clampCooldownMs,
+  DEFAULT_RATE_LIMIT_COOLDOWN_MS,
+  MAX_COOLDOWN_MS,
+  MIN_COOLDOWN_MS,
+  parseRetryAfterMs,
+} = await import("../src/lib/tts/retry-after.ts");
+
+let passed = 0;
+function check(condition, label) {
+  if (!condition) {
+    console.error(`FAIL: ${label}`);
+    process.exit(1);
+  }
+  passed += 1;
+  console.log(`PASS: ${label}`);
+}
+
+async function flushMicrotasks(rounds = 8) {
+  for (let i = 0; i < rounds; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+function makeTestEpisode(turnCount = 8, { reverseOrder = false } = {}) {
+  const hosts = [
+    { id: "h_exp", name: "Maya", role: "explainer", voiceId: "v1", accentColor: "#2563EB", avatarId: "a1" },
+    { id: "h_lrn", name: "Leo", role: "learner", voiceId: "v2", accentColor: "#D97706", avatarId: "a2" },
+    { id: "h_skp", name: "Nadia", role: "skeptic", voiceId: "v3", accentColor: "#059669", avatarId: "a3" },
+  ];
+  const segments = Array.from({ length: turnCount }, (_, idx) => ({
+    id: `seg_0${idx + 1}`,
+    order: idx,
+    speakerId: hosts[idx % hosts.length].id,
+    text: `Turn ${idx + 1} explains opportunity cost and real trade-offs clearly.`,
+    emotion: idx % 3 === 2 ? "reacting" : idx % 3 === 1 ? "curious" : "explaining",
+    visualCue:
+      idx === 1
+        ? { type: "fact-card", title: "Key Metric", value: "1x paced", explanation: "Sequential TTS concurrency is 1." }
+        : idx === 3
+          ? {
+              type: "comparison",
+              title: "Choice Comparison",
+              left: { label: "Study", value: "Higher quiz retention" },
+              right: { label: "Shift", value: "Immediate hourly wage" },
+            }
+          : { type: "none" },
+  }));
+  return {
+    id: "ep_queue_test",
+    title: "Opportunity Cost Queue Test",
+    topic: "Opportunity cost for college commuters",
+    tone: "casual",
+    length: turnCount <= 10 ? "quick" : "detailed",
+    status: "ready",
+    hosts,
+    segments: reverseOrder ? [...segments].reverse() : segments,
+    createdAt: "2026-11-26T00:00:00Z",
+  };
+}
+
+function createHarness(episode = makeTestEpisode(8), opts = {}) {
+  let nowMs = 1_000_000;
+  let nextTimerId = 1;
+  const timersMap = new Map();
+
+  const timers = {
+    setTimeout(fn, ms) {
+      const id = nextTimerId++;
+      timersMap.set(id, { id, runAt: nowMs + Math.max(0, ms), fn });
+      return id;
+    },
+    clearTimeout(handle) {
+      timersMap.delete(handle);
+    },
+  };
+
+  async function advance(ms) {
+    await flushMicrotasks();
+    const target = nowMs + ms;
+    while (true) {
+      let earliest = null;
+      for (const t of timersMap.values()) {
+        if (t.runAt <= target && (!earliest || t.runAt < earliest.runAt)) {
+          earliest = t;
+        }
+      }
+      if (!earliest) break;
+      timersMap.delete(earliest.id);
+      nowMs = earliest.runAt;
+      earliest.fn();
+      await flushMicrotasks();
+    }
+    nowMs = target;
+    await flushMicrotasks();
+  }
+
+  let seqUrl = 0;
+  const createdCounts = new Map();
+  const revokedCounts = new Map();
+  const activeUrls = new Set();
+
+  const urlApi = {
+    createObjectURL() {
+      seqUrl += 1;
+      const url = `blob:kuro-test/${seqUrl}`;
+      createdCounts.set(url, (createdCounts.get(url) ?? 0) + 1);
+      activeUrls.add(url);
+      return url;
+    },
+    revokeObjectURL(url) {
+      revokedCounts.set(url, (revokedCounts.get(url) ?? 0) + 1);
+      activeUrls.delete(url);
+    },
+  };
+
+  let inFlight = 0;
+  let maxConcurrency = 0;
+  const requests = [];
+  const pendingBySegmentId = new Map();
+
+  const fetchSegmentAudio = (payload, signal) => {
+    inFlight += 1;
+    if (inFlight > maxConcurrency) maxConcurrency = inFlight;
+
+    return new Promise((resolve, reject) => {
+      const rec = {
+        payload,
+        signal,
+        startedAt: nowMs,
+        aborted: false,
+        settled: false,
+        resolve(res) {
+          if (rec.settled) return;
+          rec.settled = true;
+          inFlight = Math.max(0, inFlight - 1);
+          resolve(res);
+        },
+        reject(err) {
+          if (rec.settled) return;
+          rec.settled = true;
+          inFlight = Math.max(0, inFlight - 1);
+          reject(err);
+        },
+      };
+      signal.addEventListener(
+        "abort",
+        () => {
+          rec.aborted = true;
+          if (!rec.settled) {
+            rec.settled = true;
+            inFlight = Math.max(0, inFlight - 1);
+            resolve({
+              ok: false,
+              httpStatus: 499,
+              errorCode: "TTS_GENERATION_FAILED",
+              message: "Cancelled",
+              retryable: false,
+            });
+          }
+        },
+        { once: true },
+      );
+      requests.push(rec);
+      const list = pendingBySegmentId.get(payload.segmentId) ?? [];
+      list.push(rec);
+      pendingBySegmentId.set(payload.segmentId, list);
+    });
+  };
+
+  function resolveSegment(
+    segmentId,
+    result = { ok: true, blob: new Blob(["wav-bytes"]), contentType: "audio/wav", durationMs: 3200 },
+  ) {
+    const list = pendingBySegmentId.get(segmentId) ?? [];
+    const req = list.find((r) => !r.settled);
+    if (req) req.resolve(result);
+    return req;
+  }
+
+  let currentTimeSec = 0;
+  let loadedUrl = null;
+  let activeCallbacks = null;
+  let nextPlayOutcome = { ok: true };
+  let verifyResult = opts.verifyPlayableResult ?? true;
+  const driverStats = { loads: [], resumes: 0, pauses: 0, stops: 0, disposes: 0, verifies: 0 };
+
+  const audioDriver = {
+    ...(opts.withVerifyPlayable
+      ? {
+          async verifyPlayable() {
+            driverStats.verifies += 1;
+            return verifyResult;
+          },
+        }
+      : {}),
+    async loadAndPlay(url, startTimeSec, callbacks) {
+      loadedUrl = url;
+      currentTimeSec = startTimeSec;
+      activeCallbacks = callbacks;
+      driverStats.loads.push({ url, startTimeSec, callbacks });
+      const outcome = nextPlayOutcome;
+      nextPlayOutcome = { ok: true };
+      if (outcome.ok) {
+        callbacks.onLoadedMetadata(3200);
+        callbacks.onCanPlay();
+        callbacks.onPlay();
+      }
+      return outcome;
+    },
+    async resume(callbacks) {
+      driverStats.resumes += 1;
+      if (callbacks) {
+        activeCallbacks = callbacks;
+      }
+      const outcome = nextPlayOutcome;
+      nextPlayOutcome = { ok: true };
+      if (outcome.ok && activeCallbacks) {
+        activeCallbacks.onPlay();
+      }
+      return outcome;
+    },
+    pause() {
+      driverStats.pauses += 1;
+      activeCallbacks?.onPause();
+      return currentTimeSec;
+    },
+    stop() {
+      driverStats.stops += 1;
+      loadedUrl = null;
+      activeCallbacks = null;
+      currentTimeSec = 0;
+    },
+    getCurrentTimeSec() {
+      return currentTimeSec;
+    },
+    dispose() {
+      driverStats.disposes += 1;
+      loadedUrl = null;
+      activeCallbacks = null;
+    },
+  };
+
+  const controller = createEpisodeAudioQueueEngine(episode, {
+    fetchSegmentAudio,
+    audioDriver,
+    urlApi,
+    timers,
+    now: () => nowMs,
+    minRequestIntervalMs: opts.minRequestIntervalMs,
+  });
+
+  return {
+    controller,
+    advance,
+    requests,
+    resolveSegment,
+    audioDriver,
+    driverStats,
+    getNow: () => nowMs,
+    getPendingTimerCount: () => timersMap.size,
+    setVerifyPlayableResult(v) {
+      verifyResult = v;
+    },
+    setCurrentTimeSec(t) {
+      currentTimeSec = t;
+    },
+    setNextPlayOutcome(o) {
+      nextPlayOutcome = o;
+    },
+    getActiveCallbacks() {
+      return activeCallbacks;
+    },
+    getLoadedUrl() {
+      return loadedUrl;
+    },
+    getMaxConcurrency() {
+      return maxConcurrency;
+    },
+    getInFlight() {
+      return inFlight;
+    },
+    urlStats: { createdCounts, revokedCounts, activeUrls },
+  };
+}
+
+// =========================================================================
+// SECTION 20 TESTS (1–50): Unified Loading, Opening Buffer, Pacing, 429 Recovery & Cleanup
+// =========================================================================
+
+// 1-16, 38. Unified continuous loading panel stages, studio hidden, valid EpisodeSchema gating, sequential Turn 1 -> Turn 2, concurrency 1, 1500ms pacing, decode check, double-click safety
+{
+  const ep = makeTestEpisode(8, { reverseOrder: true });
+  const stage1 = deriveUnifiedLoadingView({ scriptPhase: "generating", episode: null, queueSnapshot: null, hostCount: 2 });
+  const stage2 = deriveUnifiedLoadingView({ scriptPhase: "validating", episode: null, queueSnapshot: null, hostCount: 2 });
+
+  check(
+    stage1.stage === "generating_script" &&
+      stage1.showLoadingPanel === true &&
+      stage1.showFullStudio === false &&
+      stage1.panelTitle === "Preparing your conversation" &&
+      stage2.stage === "validating_script" &&
+      stage2.showLoadingPanel === true &&
+      stage2.showFullStudio === false &&
+      stage2.stepHeading === "Checking the conversation",
+    "1-3. Script generation and validation share one continuous panel with studio hidden before EpisodeSchema passes",
+  );
+
+  const h = createHarness(ep, { withVerifyPlayable: true });
+  const idleSnap = h.controller.getSnapshot();
+  const idleLoadingView = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: idleSnap, hostCount: 3 });
+  check(
+    idleSnap.segments.map((s) => s.order).join(",") === "0,1,2,3,4,5,6,7" &&
+      idleLoadingView.showLoadingPanel === true &&
+      idleLoadingView.showFullStudio === false &&
+      idleLoadingView.canStartPodcast === false &&
+      INITIAL_AUDIO_BUFFER_SIZE === 2,
+    "9. Ordered init, Start podcast disabled at 0 ready, studio hidden",
+  );
+
+  h.controller.startPreparation();
+  await flushMicrotasks();
+  const sPrep1 = h.controller.getSnapshot();
+  const vPrep1 = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: sPrep1, hostCount: 3 });
+  check(
+    MAX_TTS_CONCURRENCY === 1 &&
+      MIN_TTS_REQUEST_INTERVAL_MS === 1500 &&
+      h.requests.length === 1 &&
+      h.requests[0].payload.segmentId === "seg_01" &&
+      h.getInFlight() === 1 &&
+      h.getMaxConcurrency() === 1 &&
+      vPrep1.stage === "preparing_audio" &&
+      vPrep1.showFullStudio === false &&
+      vPrep1.voiceCountText === "Opening voices: 0 of 2 ready",
+    "4,6,7. Turn 1 requested first sequentially with max concurrency 1 while studio stays hidden",
+  );
+
+  await h.advance(300);
+  h.resolveSegment("seg_01");
+  await flushMicrotasks();
+  const vOneReady = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: h.controller.getSnapshot(), hostCount: 3 });
+  check(
+    h.requests.length === 1 &&
+      vOneReady.voicesReadyCount === 1 &&
+      vOneReady.canStartPodcast === false &&
+      vOneReady.showFullStudio === false,
+    "8a,10. Minimum 1500ms interval blocks immediate Turn 2 and Start podcast remains disabled with 1 ready clip",
+  );
+
+  await h.advance(1199);
+  check(h.requests.length === 1, "8b. Pacing waits full 1500ms");
+
+  await h.advance(1);
+  check(
+    h.requests.length === 2 &&
+      h.requests[1].payload.segmentId === "seg_02" &&
+      h.requests[1].startedAt - h.requests[0].startedAt >= 1500 &&
+      h.getMaxConcurrency() === 1,
+    "5,8. Turn 2 requested second strictly >= 1500ms after Turn 1 start",
+  );
+
+  // Corrupt audio fails browser decode check BEFORE marking ready!
+  h.setVerifyPlayableResult(false);
+  h.resolveSegment("seg_02");
+  await flushMicrotasks();
+  const vDecodeFail = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: h.controller.getSnapshot(), hostCount: 3 });
+  check(
+    vDecodeFail.canStartPodcast === false &&
+      vDecodeFail.stage === "audio_partial" &&
+      h.controller.getSnapshot().segments[1].failureClass === "audio",
+    "13. Corrupt Turn 2 clip fails browser decode check before enabling Start podcast",
+  );
+
+  // Retry Turn 2 with decodable WAV -> Start podcast enables at 2 ready!
+  h.setVerifyPlayableResult(true);
+  await h.advance(1600);
+  h.controller.retryPreparation();
+  await flushMicrotasks();
+  await h.advance(400);
+  h.resolveSegment("seg_02");
+  await flushMicrotasks();
+  const sReady = h.controller.getSnapshot();
+  const vReady = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: sReady, hostCount: 3 });
+  check(
+    vReady.stage === "audio_ready" &&
+      vReady.canStartPodcast === true &&
+      vReady.showFullStudio === false &&
+      vReady.voiceCountText === "Opening voices: 2 of 2 ready" &&
+      h.requests.length === 3,
+    "11. Start podcast enables at 2 verified ready clips and preparation stops before Turn 3",
+  );
+
+  // Double-click Start podcast safety: 2 synchronous clicks produce 1 playback start and 0 extra fetches
+  h.controller.startPodcast();
+  h.controller.startPodcast();
+  await flushMicrotasks();
+  const sActive = h.controller.getSnapshot();
+  const vActive = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: sActive, hostCount: 3 });
+  check(
+    vActive.showFullStudio === true &&
+      vActive.showLoadingPanel === false &&
+      sActive.metrics.cacheHitCount === 1 &&
+      h.driverStats.loads.length === 1 &&
+      h.requests.length === 3,
+    "14,38. Start podcast double-click is idempotent, opens full studio, and plays cached Turn 1 immediately",
+  );
+
+  await h.advance(1200);
+  check(
+    h.requests.length === 4 &&
+      h.requests[3].payload.segmentId === "seg_03" &&
+      h.requests[3].startedAt - h.requests[2].startedAt >= 1500 &&
+      h.getMaxConcurrency() === 1,
+    "15,16. Turn 3 generates during Turn 1 playback in near priority order respecting pacing and concurrency 1",
+  );
+  h.controller.dispose();
+}
+
+// 12. One-turn episode enables at 1 ready
+{
+  const ep1 = makeTestEpisode(1);
+  const h1 = createHarness(ep1);
+  h1.controller.startPreparation();
+  await flushMicrotasks();
+  h1.resolveSegment("seg_01");
+  await flushMicrotasks();
+  const v1 = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep1, queueSnapshot: h1.controller.getSnapshot(), hostCount: 2 });
+  check(
+    v1.stage === "audio_ready" && v1.canStartPodcast === true && v1.voiceCountText === "Opening voices: 1 of 1 ready",
+    "12. One-turn episode enables Start podcast with 1 verified clip ready",
+  );
+  h1.controller.dispose();
+}
+
+// 17-22, 50. 429 shared cooldown overrides pacing, Turn 2 recovery, partial start retains Turn 1 + all player controls work cleanly
+{
+  const hRec = createHarness(makeTestEpisode(4));
+  hRec.controller.startPreparation();
+  await flushMicrotasks();
+  hRec.resolveSegment("seg_01");
+  await hRec.advance(1600);
+  hRec.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "5" });
+  await flushMicrotasks();
+  await hRec.advance(3000);
+  const cdView = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: makeTestEpisode(4), queueSnapshot: hRec.controller.getSnapshot(), hostCount: 2 });
+  check(
+    cdView.stage === "audio_cooldown" &&
+      hRec.controller.getSnapshot().cooldownActive === true &&
+      hRec.requests.length === 2,
+    "17,18. 429 activates shared cooldown overriding 1500ms interval",
+  );
+  await hRec.advance(2100);
+  hRec.resolveSegment("seg_02");
+  await flushMicrotasks();
+  check(
+    hRec.controller.getSnapshot().audioPreparationStatus === "ready" &&
+      hRec.controller.getSnapshot().canStartPodcast === true,
+    "20. Turn 2 retry after Retry-After recovers preparation cleanly",
+  );
+  hRec.controller.dispose();
+
+  const epPart = makeTestEpisode(4);
+  const hPart = createHarness(epPart);
+  hPart.controller.startPreparation();
+  await flushMicrotasks();
+  hPart.resolveSegment("seg_01");
+  await hPart.advance(1600);
+  hPart.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "3" });
+  await hPart.advance(3100);
+  hPart.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "3" });
+  await flushMicrotasks();
+  const sPart = hPart.controller.getSnapshot();
+  const vPart = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: epPart, queueSnapshot: sPart, hostCount: 2 });
+  check(
+    vPart.stage === "audio_partial" &&
+      vPart.canStartPartial === true &&
+      vPart.canRetryAudio === true &&
+      sPart.segments[0].hasCachedAudio === true &&
+      sPart.segments[1].failureCategory === "transient",
+    "21,22. Second Turn 2 failure enables explicit partial start and retains cached Turn 1",
+  );
+
+  // Verify partial start & player controls (Next, Prev, Pause, Play, Restart) work cleanly!
+  hPart.controller.startWithCaptionsAndAvailableAudio();
+  await flushMicrotasks();
+  hPart.controller.pause();
+  await flushMicrotasks();
+  hPart.controller.play();
+  await flushMicrotasks();
+  hPart.controller.next(); // 0 -> 1 (Turn 2 timed caption fallback)
+  await flushMicrotasks();
+  const onTurn2 = hPart.controller.getSnapshot();
+  hPart.controller.previous(); // 1 -> 0 (cached Turn 1)
+  await flushMicrotasks();
+  hPart.controller.restart();
+  await flushMicrotasks();
+  const afterRestart = hPart.controller.getSnapshot();
+  check(
+    onTurn2.currentIndex === 1 &&
+      onTurn2.isTimedFallbackActive === true &&
+      onTurn2.isHostedAudioPlaying === false &&
+      afterRestart.currentIndex === 0 &&
+      afterRestart.status === "paused",
+    "50. Player controls (Pause, Play, Next, Prev, Restart) work cleanly after partial start",
+  );
+  hPart.controller.dispose();
+}
+
+// 19, 37, 40, 49. Cancellation clears cooldown/timers/requests, discards stale old-session payloads, and Return to form cleans everything
+{
+  const ep = makeTestEpisode(4);
+  const hCan = createHarness(ep);
+  hCan.controller.startPreparation();
+  await flushMicrotasks();
+  const req0 = hCan.requests[0];
+  req0.resolve({ ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "6" });
+  await flushMicrotasks();
+  hCan.controller.cancelPreparation();
+  await flushMicrotasks();
+  const timersAfterCancel = hCan.getPendingTimerCount();
+  await hCan.advance(7000);
+  check(
+    timersAfterCancel === 0 &&
+      !hCan.controller.getSnapshot().cooldownActive &&
+      hCan.requests.length === 1,
+    "19,40. Cancellation during cooldown clears timers and aborts scheduled requests cleanly",
+  );
+  hCan.controller.dispose();
+  check(hCan.urlStats.activeUrls.size === 0 && hCan.getPendingTimerCount() === 0, "49. Return to form / dispose clears entire session");
+
+  const hStale = createHarness(ep);
+  hStale.controller.startPreparation();
+  await flushMicrotasks();
+  const oldReq = hStale.requests[0];
+  hStale.controller.cancelPreparation(); // bumps session & replay token
+  oldReq.resolve({ ok: true, blob: new Blob(["stale-old-session"]), contentType: "audio/wav", durationMs: 2500 });
+  await flushMicrotasks();
+  check(
+    oldReq.aborted &&
+      hStale.controller.getSnapshot().readyCount === 0 &&
+      hStale.controller.getSnapshot().canStartPodcast === false,
+    "37. Stale response from cancelled/old session is discarded cleanly",
+  );
+  hStale.controller.dispose();
+}
+
+// 23-30, 35-36. Missing key, auth failure, safety rejection, non-fatal 429 continuation, cache survival, Replay cache reuse vs permanent retention
+{
+  const hKey = createHarness(makeTestEpisode(4));
+  hKey.controller.startPreparation();
+  await flushMicrotasks();
+  hKey.resolveSegment("seg_01", { ok: false, httpStatus: 503, errorCode: "TTS_NOT_CONFIGURED", message: "Missing server key.", retryable: false });
+  await flushMicrotasks();
+  const sKey = hKey.controller.getSnapshot();
+  check(
+    sKey.outageState === "config_error" &&
+      sKey.segments[0].failureCategory === "permanent" &&
+      sKey.segments[0].manualRetryAvailable === false &&
+      hKey.requests.length === 1 &&
+      hKey.getPendingTimerCount() === 0,
+    "23. Missing key stops provider scheduler immediately with permanent status and 0 retries",
+  );
+  hKey.controller.continueWithTimedCaptions();
+  await flushMicrotasks();
+  check(
+    hKey.controller.getSnapshot().isTimedFallbackActive === true &&
+      hKey.controller.getSnapshot().isHostedAudioPlaying === false,
+    "35,36. Timed fallback never displays Speaking or overlaps hosted audio",
+  );
+  hKey.controller.dispose();
+
+  const hAuth = createHarness(makeTestEpisode(4));
+  hAuth.controller.startPreparation();
+  await flushMicrotasks();
+  hAuth.resolveSegment("seg_01", { ok: false, httpStatus: 401, errorCode: "TTS_GENERATION_FAILED", message: "Credentials invalid.", retryable: false });
+  await flushMicrotasks();
+  check(
+    hAuth.controller.getSnapshot().outageState === "auth_error" &&
+      hAuth.controller.getSnapshot().segments[0].failureCategory === "permanent" &&
+      hAuth.requests.length === 1,
+    "24. Auth failure stops provider scheduler immediately with 0 retries",
+  );
+  hAuth.controller.dispose();
+
+  // Safety + Non-fatal 429 + Cache survival + Replay reuse/recovery vs permanent retention
+  const hPlay = createHarness(makeTestEpisode(6));
+  hPlay.controller.play();
+  await flushMicrotasks();
+  hPlay.resolveSegment("seg_01"); // Turn 0 ready & playing
+  await hPlay.advance(1600);
+  // seg_02 hits safety rejection (permanent, 0 retries)
+  hPlay.resolveSegment("seg_02", { ok: false, httpStatus: 502, errorCode: "TTS_GENERATION_FAILED", message: "Blocked by safety policy", retryable: false });
+  await hPlay.advance(1600);
+  check(
+    hPlay.requests.filter((r) => r.payload.segmentId === "seg_02").length === 1 &&
+      hPlay.controller.getSnapshot().segments[1].failureCategory === "permanent" &&
+      hPlay.controller.getSnapshot().segments[1].manualRetryAvailable === false,
+    "25. Safety rejection is permanent and never retried",
+  );
+
+  // seg_03 & seg_04 hit 429 twice -> outageState remains none, seg_01 remains cached, seg_05 still generates!
+  hPlay.resolveSegment("seg_03", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+  await hPlay.advance(2100);
+  hPlay.resolveSegment("seg_03", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+  await flushMicrotasks();
+  hPlay.getActiveCallbacks().onEnded(); // 0 -> 1 (seg_02 timed fallback ~4.6s)
+  await hPlay.advance(2500); // seg_03 cooldown expires -> seg_04 starts in lookahead [1..3]
+  hPlay.resolveSegment("seg_04", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+  await hPlay.advance(2100);
+  hPlay.resolveSegment("seg_04", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+  await hPlay.advance(6000); // enters Turn 2 & cooldown expires -> seg_05 starts in [2..4]
+  check(
+    hPlay.controller.getSnapshot().outageState === "none" &&
+      hPlay.controller.getSnapshot().segments[0].hasCachedAudio === true &&
+      hPlay.requests.some((r) => r.payload.segmentId === "seg_05"),
+    "26,27. Mid-episode 429s preserve ready cache and do not permanently halt future generation",
+  );
+
+  // Resolve seg_05 & seg_06 cleanly to reach completion
+  let loops = 0;
+  while (hPlay.controller.getSnapshot().status !== "complete" && loops++ < 30) {
+    const snap = hPlay.controller.getSnapshot();
+    const gen = snap.segments.find((s) => s.status === "generating");
+    if (gen) {
+      hPlay.resolveSegment(gen.segmentId);
+      await flushMicrotasks();
+      continue;
+    }
+    if (snap.cooldownActive) {
+      await hPlay.advance(2100);
+    } else if (snap.currentSegmentFailed) {
+      await hPlay.advance(9000);
+    } else if (snap.status === "playing") {
+      hPlay.getActiveCallbacks().onEnded();
+      await flushMicrotasks();
+    } else {
+      await hPlay.advance(1600);
+    }
+  }
+  check(
+    hPlay.controller.getSnapshot().status === "complete" &&
+      hPlay.controller.getSnapshot().liveAnnouncement === "Episode complete.",
+    "48. Episode completion is announced cleanly",
+  );
+
+  // Replay reuses seg_01, seg_05, seg_06; retries transient seg_03 & seg_04; skips permanent seg_02!
+  const callsBeforeReplay = hPlay.requests.length;
+  hPlay.controller.replay();
+  await hPlay.advance(1600);
+  const firstReplayCalls = hPlay.requests.slice(callsBeforeReplay).map((r) => r.payload.segmentId);
+  check(
+    firstReplayCalls.length === 1 &&
+      firstReplayCalls[0] === "seg_03" &&
+      !firstReplayCalls.includes("seg_01") &&
+      !firstReplayCalls.includes("seg_02"),
+    "28,29,30. Replay reuses cached seg_01, skips permanent seg_02, and progressively retries transient seg_03",
+  );
+  hPlay.controller.dispose();
+  const allUrlsOnce = Array.from(hPlay.urlStats.createdCounts.keys()).every(
+    (u) => hPlay.urlStats.revokedCounts.get(u) === 1,
+  );
+  check(hPlay.urlStats.activeUrls.size === 0 && allUrlsOnce, "39. Object URLs are revoked exactly once");
+}
+
+// 31-34. Manual Retry targets one segment, respects pacing, deduplicates rapid clicks, enforces bound 1 per cycle
+{
+  const epRetry = makeTestEpisode(3);
+  epRetry.segments[1].text =
+    "This longer explanation covers opportunity cost choices between studying for exams, commuting across town, and working part-time shifts in clear detail.";
+  const h = createHarness(epRetry);
+  h.controller.play();
+  await flushMicrotasks();
+  h.resolveSegment("seg_01");
+  await h.advance(1600);
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Busy", retryable: true });
+  await h.advance(2100);
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Busy", retryable: true });
+  await flushMicrotasks();
+
+  h.getActiveCallbacks().onEnded(); // 0 -> 1 (Turn 1 seg_02 failed)
+  await h.advance(1600); // seg_03 starts
+  h.resolveSegment("seg_03");
+  await h.advance(100); // only 100ms after seg_03 start!
+  const seg3Start = h.requests[h.requests.length - 1].startedAt;
+  const countBefore = h.requests.length;
+
+  h.controller.retryCurrentSegment();
+  h.controller.retryCurrentSegment(); // rapid click dedupe!
+  await flushMicrotasks();
+  const firedTooEarly = h.requests.length > countBefore;
+  await h.advance(1450);
+  const added = h.requests.slice(countBefore);
+  check(
+    !firedTooEarly &&
+      added.length === 1 &&
+      added[0].payload.segmentId === "seg_02" &&
+      added[0].startedAt - seg3Start >= 1500,
+    "31,32,33. Manual Retry targets one segment, respects 1500ms pacing, and deduplicates rapid clicks",
+  );
+
+  // Manual retry fails again -> limit_reached enforces 1 manual retry per cycle
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Busy again", retryable: true });
+  await flushMicrotasks();
+  const afterFail = h.controller.getSnapshot();
+  h.controller.retryCurrentSegment();
+  await flushMicrotasks();
+  check(
+    afterFail.currentSegmentRetryDisabledReason === "limit_reached" &&
+      afterFail.segments[1].manualRetryAvailable === false &&
+      h.requests.length === countBefore + 1,
+    "34. Manual retry bound (1 per cycle) is strictly enforced",
+  );
+  h.controller.dispose();
+}
+
+// 41-47. Config clamping, fallback, bounds, zero speechSynthesis/local-TTS/storage/audio-files
+{
+  check(
+    resolveTtsRequestIntervalMs(undefined) === 1500 &&
+      resolveTtsRequestIntervalMs("abc") === 1500 &&
+      resolveTtsRequestIntervalMs("0") === 1500,
+    "41. Invalid interval config falls back to 1500",
+  );
+  check(
+    resolveTtsRequestIntervalMs("500") === 1000 &&
+      resolveTtsRequestIntervalMs("2200") === 2200 &&
+      resolveTtsRequestIntervalMs("9000") === 5000,
+    "42. Interval clamps strictly to 1000-5000",
+  );
+  check(
+    MAX_AUTOMATIC_CAPACITY_RETRIES_PER_SEGMENT === 1 &&
+      MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT === 2 &&
+      MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE === 1 &&
+      MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE === 3 &&
+      MAX_AUTOMATIC_PROVIDER_CALLS_PER_SEGMENT === 3 &&
+      PREFETCH_LOOKAHEAD === 2 &&
+      parseRetryAfterMs("0") === MIN_COOLDOWN_MS &&
+      parseRetryAfterMs("120") === MAX_COOLDOWN_MS &&
+      parseRetryAfterMs("bad") === DEFAULT_RATE_LIMIT_COOLDOWN_MS &&
+      clampCooldownMs(5000) === 5000,
+    "47. Provider-call bounds remain explicit",
+  );
+
+  const srcFiles = [];
+  function walkSrc(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walkSrc(full);
+      else if (/\.(ts|tsx)$/.test(ent.name)) srcFiles.push(full);
+    }
+  }
+  walkSrc(path.join(root, "src"));
+  const badSpeech = srcFiles.filter((f) => fs.readFileSync(f, "utf8").toLowerCase().includes("speechsynthesis"));
+  const badStorage = srcFiles.filter((f) => {
+    const txt = fs.readFileSync(f, "utf8").toLowerCase();
+    return txt.includes("indexeddb") || txt.includes("caches.open") || txt.includes("localstorage.setitem");
+  });
+  const pkgJsonText = fs.readFileSync(path.join(root, "package.json"), "utf8").toLowerCase();
+  const localTtsTokens = ["kokoro", "onnxruntime", "@huggingface/transformers", "transformers.js", "piper"];
+  const badLocalTtsPkg = localTtsTokens.filter((tok) => pkgJsonText.includes(tok));
+  const badLocalTtsSrc = srcFiles.filter((f) => {
+    const txt = fs.readFileSync(f, "utf8").toLowerCase();
+    return localTtsTokens.some((tok) => txt.includes(tok));
+  });
+  const trackedAudio = execSync("git ls-files", { cwd: root, encoding: "utf8" })
+    .split(/\r?\n/)
+    .filter((f) => /\.(wav|mp3|pcm|ogg|py)$/i.test(f));
+
+  check(badSpeech.length === 0, "43. No browser speech fallback in src/");
+  check(
+    badLocalTtsPkg.length === 0 &&
+      badLocalTtsSrc.length === 0 &&
+      !fs.existsSync(path.join(root, "src/components/kuro/player/audio-preparation-panel.tsx")),
+    "44. No local TTS package and no separate audio-preparation-panel.tsx",
+  );
+  check(badStorage.length === 0, "45. No permanent browser audio storage in src/");
+  check(trackedAudio.length === 0, "46. No generated audio or Python files tracked");
+}
+
+console.log(`ALL ${passed} AUDIO QUEUE TESTS PASSED.`);

@@ -1,6 +1,11 @@
 import { KuroSkeleton } from "@/components/kuro/kuro-skeleton";
+import { resolveTtsRequestIntervalMs } from "@/lib/tts/tts-pacing-config";
 
 export default function HomePage() {
+  const ttsRequestIntervalMs = resolveTtsRequestIntervalMs(
+    process.env.KURO_TTS_REQUEST_INTERVAL_MS,
+  );
+
   return (
     <main className="mx-auto w-full max-w-[840px] px-3 py-4 sm:px-6 sm:py-6">
       <header className="mb-3.5 sm:mb-4">
@@ -8,8 +13,8 @@ export default function HomePage() {
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl">
             Kuro
           </h1>
-          <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
-            Timed preview
+          <span className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-950">
+            Hosted audio
           </span>
         </div>
         <p className="mt-0.5 text-sm font-semibold text-blue-800">
@@ -21,7 +26,7 @@ export default function HomePage() {
         </p>
       </header>
 
-      <KuroSkeleton />
+      <KuroSkeleton ttsRequestIntervalMs={ttsRequestIntervalMs} />
     </main>
   );
 }

@@ -12,21 +12,20 @@ Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a diff
 
 ## Current Status
 
-- **Completed (`WP-008`–`WP-010`):** Verified Next.js application (`WP-008` mock milestone, `WP-008.6` **Kuromates** rename, `WP-009` live Gemini script generation on `main`, and `WP-010` single-turn hosted Kuromate TTS preview on `feat/wp-010-segmented-tts`).
-- **Pending live orchestration (`WP-011`+):** Full-episode audio queue, synchronized audio playback, and stitched downloads follow `WP-010`.
+- **Completed (`WP-008`–`WP-011`):** Verified Next.js application with live Gemini script generation (`WP-009`), allowlisted Kuromate voices (`WP-010`), and full-episode audio queue playback with bounded prefetching and caption fallback (`WP-011` on `feat/wp-011-full-episode-audio`).
+- **Deferred / Download limit:** Transcript `.txt` download is active; combined episode audio download, persistent storage, and offline audio remain deferred.
 
-## Core MVP (Mock Milestone Active)
+## Core MVP (Hosted Audio Active)
 
 - Input 10–2,500 chars; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** or **3** Kuromates.
-- Production studio player (`Try sample episode` fallback or validated mock API) with shared-desk **Kuromates**, 5 contextual monitor visuals, timed silent playback, synchronized captions, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
-- Live multi-host Gemini scripts and segmented/stitched audio follow `WP-003B`.
+- Generate an episode and follow the single loading flow as Kuro prepares opening Kuromate voices sequentially before starting playback with max-2 prefetching, synchronized captions, studio monitor visuals, shared `Retry-After` handling, explicit caption fallback, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
 
 See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusions, and roadmap.
 
 ## Tech Stack
 
 - **App:** Next.js (App Router), React, TypeScript, Tailwind CSS, Zod
-- **AI & Audio:** Gemini `gemini-3.8-flash` (`v1`) scripts + `gemini-3.8-flash-tts` (`v1beta`) single-turn voices; full audio stitching pending `WP-011`
+- **AI & Audio:** Gemini `gemini-3.8-flash` (`v1`) scripts + `gemini-3.8-flash-tts` (`v1beta`) segmented audio queue; combined audio download deferred
 - **Hosting & Workflow:** Vercel, GitHub
 
 ## Local Setup
@@ -41,6 +40,7 @@ npm run lint
 npm run test:schema
 npm run test:generation
 npm run test:tts
+npm run test:audio-queue
 npm run build
 npm run start
 ```
