@@ -25,6 +25,9 @@ export interface UnifiedLoadingView {
   stepHeading: string;
   statusText: string;
   countdownText: string | null;
+  fallbackNoticeTitle: string | null;
+  fallbackNotice: string | null;
+  isLongQuotaWait: boolean;
   voicesReadyCount: number;
   voicesTargetCount: number;
   voiceCountText: string;
@@ -55,6 +58,9 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Preparing your conversation",
       statusText: "Building the Kuromate discussion...",
       countdownText: null,
+      fallbackNoticeTitle: null,
+      fallbackNotice: null,
+      isLongQuotaWait: false,
       voicesReadyCount: 0,
       voicesTargetCount: defaultTarget,
       voiceCountText: `Opening voices: 0 of ${defaultTarget} ready`,
@@ -77,6 +83,9 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Checking the conversation",
       statusText: "Validating the episode structure and host turns...",
       countdownText: null,
+      fallbackNoticeTitle: null,
+      fallbackNotice: null,
+      isLongQuotaWait: false,
       voicesReadyCount: 0,
       voicesTargetCount: defaultTarget,
       voiceCountText: `Opening voices: 0 of ${defaultTarget} ready`,
@@ -99,6 +108,9 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Preparing your conversation",
       statusText: "Ready to create an episode.",
       countdownText: null,
+      fallbackNoticeTitle: null,
+      fallbackNotice: null,
+      isLongQuotaWait: false,
       voicesReadyCount: 0,
       voicesTargetCount: defaultTarget,
       voiceCountText: `Opening voices: 0 of ${defaultTarget} ready`,
@@ -119,7 +131,20 @@ export function deriveUnifiedLoadingView(input: {
     ? Math.max(1, Math.ceil(queueSnapshot.cooldownRemainingMs / 1000))
     : 0;
   const countdownText =
-    cooldownSecs > 0 ? `Preparing more voices in ${cooldownSecs}s.` : null;
+    cooldownSecs > 0 ? `Resuming after cooldown in ${cooldownSecs}s.` : null;
+
+  const isAllHostedExhausted =
+    queueSnapshot.allHostedDailyExhausted || queueSnapshot.longQuotaExhausted;
+  const isPrimaryDailyExhausted = queueSnapshot.primaryModelState === "daily_exhausted";
+
+  const fallbackNoticeTitle = queueSnapshot.usedFallbackAudio
+    ? "Alternate hosted voice active"
+    : null;
+  const fallbackNotice = queueSnapshot.usedFallbackAudio
+    ? isPrimaryDailyExhausted
+      ? "Kuro’s primary hosted voice reached today’s limit, so an available Kuromate voice is being used."
+      : "Primary hosted voices were busy, so Kuro prepared an available Kuromate voice."
+    : null;
 
   if (queueSnapshot.hasStartedPodcast) {
     return {
@@ -131,6 +156,9 @@ export function deriveUnifiedLoadingView(input: {
       stepHeading: "Ready to begin",
       statusText: "Studio active",
       countdownText,
+      fallbackNoticeTitle,
+      fallbackNotice,
+      isLongQuotaWait: isAllHostedExhausted,
       voicesReadyCount: ready,
       voicesTargetCount: target,
       voiceCountText,
@@ -157,6 +185,9 @@ export function deriveUnifiedLoadingView(input: {
             ? "Your opening Kuromate voice is ready"
             : "Your opening Kuromate voices are ready",
         countdownText: null,
+        fallbackNoticeTitle,
+        fallbackNotice,
+        isLongQuotaWait: isAllHostedExhausted,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -175,12 +206,15 @@ export function deriveUnifiedLoadingView(input: {
         showFullStudio: false,
         panelTitle: "Preparing your conversation",
         stepNumber: 3,
-        stepHeading: "Preparing the opening voices",
+        stepHeading: "Voice generation is briefly paused",
         statusText:
           ready >= 1
-            ? "One opening voice is ready. Waiting briefly for the next turn."
-            : "Voice generation is briefly paused.",
+            ? "One opening voice is ready. Kuro will resume after the provider’s short cooldown."
+            : "Kuro will resume after the provider’s short cooldown.",
         countdownText,
+        fallbackNoticeTitle,
+        fallbackNotice,
+        isLongQuotaWait: false,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
@@ -199,45 +233,66 @@ export function deriveUnifiedLoadingView(input: {
         showFullStudio: false,
         panelTitle: "Preparing your conversation",
         stepNumber: 4,
-        stepHeading: "Opening voice partially ready",
-        statusText:
-          "One opening voice is ready, while the second voice hit a temporary limit. Start with available audio and captions or continue preparing voices.",
-        countdownText,
+        stepHeading: isAllHostedExhausted
+          ? "Hosted voice limit reached for today"
+          : "Opening voice partially ready",
+        statusText: isAllHostedExhausted
+          ? "One opening voice is ready, and Kuro’s hosted voice options reached today’s project limit. Start with available audio and captions."
+          : "One opening voice is ready, while the second voice is temporarily unavailable. Start with available audio and captions or continue preparing voices.",
+        countdownText: isAllHostedExhausted ? null : countdownText,
+        fallbackNoticeTitle,
+        fallbackNotice,
+        isLongQuotaWait: isAllHostedExhausted,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
         canStartPodcast: false,
         canStartPartial: queueSnapshot.canStartPartialPodcast,
-        canRetryAudio: queueSnapshot.canRetryPreparation,
+        canRetryAudio: !isAllHostedExhausted && queueSnapshot.canRetryPreparation,
         canContinueTimedCaptions: true,
-        isPermanentUnavailable: false,
+        isPermanentUnavailable: isAllHostedExhausted,
         hostCount: effectiveHostCount,
       };
 
     case "unavailable": {
       const permanentOutage =
+        isAllHostedExhausted ||
         queueSnapshot.outageState === "config_error" ||
         queueSnapshot.outageState === "auth_error" ||
         !queueSnapshot.canRetryPreparation;
+      const isGenericOutage =
+        !isAllHostedExhausted &&
+        queueSnapshot.outageState === "provider_outage";
+
       return {
         stage: "audio_unavailable",
         showLoadingPanel: true,
         showFullStudio: false,
         panelTitle: "Preparing your conversation",
         stepNumber: 3,
-        stepHeading: permanentOutage
-          ? "Hosted voices unavailable"
-          : "Opening voices temporarily paused",
-        statusText:
-          queueSnapshot.preparationMessage ??
-          "Hosted Kuromate voices are unavailable right now. Continue with timed captions or return to the form.",
-        countdownText,
+        stepHeading: isAllHostedExhausted
+          ? "Hosted voice limit reached for today"
+          : permanentOutage
+            ? "Hosted voices unavailable"
+            : isGenericOutage
+              ? "Hosted voices are temporarily unavailable"
+              : "Hosted voices are temporarily unavailable",
+        statusText: isAllHostedExhausted
+          ? "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions."
+          : isGenericOutage
+            ? "Your conversation is safe. Continue with captions or try again later."
+            : queueSnapshot.preparationMessage ??
+              "Your conversation is safe. Continue with captions or try again later.",
+        countdownText: isAllHostedExhausted ? null : countdownText,
+        fallbackNoticeTitle,
+        fallbackNotice,
+        isLongQuotaWait: isAllHostedExhausted,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
         canStartPodcast: false,
         canStartPartial: false,
-        canRetryAudio: queueSnapshot.canRetryPreparation,
+        canRetryAudio: !isAllHostedExhausted && queueSnapshot.canRetryPreparation,
         canContinueTimedCaptions: true,
         isPermanentUnavailable: permanentOutage,
         hostCount: effectiveHostCount,
@@ -254,16 +309,20 @@ export function deriveUnifiedLoadingView(input: {
         stepHeading: "Voice preparation paused",
         statusText: "Opening-voice preparation was paused.",
         countdownText: null,
+        fallbackNoticeTitle,
+        fallbackNotice,
+        isLongQuotaWait: isAllHostedExhausted,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,
         canStartPodcast: false,
         canStartPartial: false,
         canRetryAudio:
+          !isAllHostedExhausted &&
           queueSnapshot.outageState !== "config_error" &&
           queueSnapshot.outageState !== "auth_error",
         canContinueTimedCaptions: true,
-        isPermanentUnavailable: false,
+        isPermanentUnavailable: isAllHostedExhausted,
         hostCount: effectiveHostCount,
       };
 
@@ -281,6 +340,9 @@ export function deriveUnifiedLoadingView(input: {
         stepHeading: "Preparing the opening voices",
         statusText: `Preparing voice ${turnNum} of ${target}`,
         countdownText: null,
+        fallbackNoticeTitle,
+        fallbackNotice,
+        isLongQuotaWait: isAllHostedExhausted,
         voicesReadyCount: ready,
         voicesTargetCount: target,
         voiceCountText,

@@ -27,6 +27,7 @@ import {
   buildRepairPrompt,
   type ValidationIssueSummary,
 } from "@/lib/episode/gemini-prompt";
+import { resolveEpisodeVoiceIdentities } from "@/lib/tts/kuromate-identity-ids";
 
 export type GenerationMode = "live" | "mock";
 
@@ -177,17 +178,33 @@ export function assembleEpisodeCandidate(
   const draft = rawDraft as Record<string, unknown>;
   const rawHosts = Array.isArray(draft.hosts) ? draft.hosts : [];
 
+  const identityInputs = rawHosts
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" && item !== null && !Array.isArray(item),
+    )
+    .map((hostObj, idx) => ({
+      id: typeof hostObj.id === "string" && hostObj.id.trim() ? hostObj.id.trim() : `host_${idx + 1}`,
+      name: typeof hostObj.name === "string" ? hostObj.name : "",
+      voiceId: typeof hostObj.voiceId === "string" ? hostObj.voiceId : undefined,
+      avatarId: typeof hostObj.avatarId === "string" ? hostObj.avatarId : undefined,
+    }));
+  const assignedIdentities = resolveEpisodeVoiceIdentities(identityInputs);
+
   const enrichedHosts = rawHosts.map((item, idx) => {
     if (typeof item !== "object" || item === null || Array.isArray(item)) {
       return item;
     }
     const hostObj = item as Record<string, unknown>;
+    const hostId =
+      typeof hostObj.id === "string" && hostObj.id.trim() ? hostObj.id.trim() : `host_${idx + 1}`;
     const role = typeof hostObj.role === "string" ? hostObj.role : "explainer";
+    const stableVoiceId = assignedIdentities.get(hostId) ?? `kuromate_guest_0${Math.min(3, idx + 1)}_v1`;
     return {
       id: hostObj.id,
       name: hostObj.name,
       role: hostObj.role,
-      voiceId: `voice_provisional_${role}_0${idx + 1}`,
+      voiceId: stableVoiceId,
       accentColor: HOST_ACCENTS[idx % HOST_ACCENTS.length],
       avatarId: `avatar_${role}_0${idx + 1}`,
     };

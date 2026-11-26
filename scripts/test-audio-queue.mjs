@@ -47,7 +47,9 @@ module.registerHooks({
 
 const { deriveUnifiedLoadingView } = await import("../src/lib/episode/unified-loading-state.ts");
 const {
+  buildSegmentCacheKey,
   createEpisodeAudioQueueEngine,
+  createTtsSessionCircuit,
   INITIAL_AUDIO_BUFFER_SIZE,
   MAX_AUTOMATIC_CAPACITY_RETRIES_PER_SEGMENT,
   MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT,
@@ -61,6 +63,7 @@ const {
 } = await import("../src/lib/tts/episode-audio-queue-engine.ts");
 const {
   clampCooldownMs,
+  classifyRetryAfter,
   DEFAULT_RATE_LIMIT_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
   MIN_COOLDOWN_MS,
@@ -309,6 +312,7 @@ function createHarness(episode = makeTestEpisode(8), opts = {}) {
     timers,
     now: () => nowMs,
     minRequestIntervalMs: opts.minRequestIntervalMs,
+    sessionCircuit: opts.sessionCircuit,
   });
 
   return {
@@ -836,6 +840,322 @@ function createHarness(episode = makeTestEpisode(8), opts = {}) {
   );
   check(badStorage.length === 0, "45. No permanent browser audio storage in src/");
   check(trackedAudio.length === 0, "46. No generated audio or Python files tracked");
+}
+
+// =========================================================================
+// WP-011.5 SECTION 17 TESTS (Queue 1-15): Fallback Opening Buffer, Long Quota Circuit Breaker, Mixed Sync & Scope Guard
+// =========================================================================
+
+// Queue 1, 3, 4, 5, 6, 11: Opening buffer via fallback, circuit-open routing, shared cache, zero-call Replay, episode notice
+{
+  const sharedCircuit = createTtsSessionCircuit();
+  const ep = makeTestEpisode(4);
+  const h = createHarness(ep, { sessionCircuit: sharedCircuit });
+  h.controller.startPreparation();
+  await flushMicrotasks();
+
+  // Turn 1 hits primary daily quota on server -> server falls back & returns audio + long_quota_wait headers
+  h.resolveSegment("seg_01", {
+    ok: true,
+    blob: new Blob(["fallback-wav-1"]),
+    contentType: "audio/wav",
+    durationMs: 2800,
+    fallbackUsed: true,
+    quotaClass: "long_quota_wait",
+    retryAfterHeader: "68036",
+  });
+  await flushMicrotasks();
+  const vDuringPrep = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: h.controller.getSnapshot(), hostCount: 3 });
+  check(
+    sharedCircuit.isPrimaryOpen(h.getNow()) === true &&
+      h.controller.getSnapshot().primaryCircuitOpen === true &&
+      h.controller.getSnapshot().usedFallbackAudio === true &&
+      vDuringPrep.fallbackNotice ===
+        "Kuro’s primary hosted voice reached today’s limit, so an available Kuromate voice is being used.",
+    "[WP-011.5 Queue 01a] Turn 1 fallback opens session circuit and sets loading panel disclosure",
+  );
+
+  await h.advance(1550);
+  h.resolveSegment("seg_02", {
+    ok: true,
+    blob: new Blob(["fallback-wav-2"]),
+    contentType: "audio/wav",
+    durationMs: 2900,
+    fallbackUsed: true,
+    quotaClass: "none",
+  });
+  await flushMicrotasks();
+
+  const readySnap = h.controller.getSnapshot();
+  const readyView = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: readySnap, hostCount: 3 });
+  check(
+    readyView.stage === "audio_ready" &&
+      readyView.canStartPodcast === true &&
+      h.requests[1].payload.routePreference === "fallback" &&
+      readySnap.audioSourceSummary === "fallback",
+    "[WP-011.5 Queue 01b,03,04,06] Turn 2 routes directly to fallback, caches in same cache, enables Start podcast, tracks episode-level fallback",
+  );
+
+  // Start podcast & resolve remaining turns cleanly
+  h.controller.startPodcast();
+  await h.advance(1600);
+  h.resolveSegment("seg_03", { ok: true, blob: new Blob(["fb-3"]), contentType: "audio/wav", durationMs: 2100, fallbackUsed: true });
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 0 -> 1
+  await h.advance(1600);
+  h.resolveSegment("seg_04", { ok: true, blob: new Blob(["fb-4"]), contentType: "audio/wav", durationMs: 2100, fallbackUsed: true });
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 1 -> 2
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 2 -> 3
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // complete!
+  await flushMicrotasks();
+
+  const beforeReplayCount = h.requests.length;
+  h.controller.replay();
+  await h.advance(2000);
+  const sDone = h.controller.getSnapshot();
+  check(
+    sDone.status === "playing" &&
+      h.requests.length === beforeReplayCount &&
+      h.requests.slice(1).every((r) => r.payload.routePreference === "fallback") &&
+      h.getMaxConcurrency() === 1 &&
+      sDone.metrics.minObservedRequestIntervalMs >= 1500,
+    "[WP-011.5 Queue 05,11] Replay makes 0 calls for cached fallback clips while preserving concurrency 1 and >=1500ms pacing",
+  );
+
+  // Queue 10: Shared session circuit carries over to a new episode and resets on expiry/reset
+  const ep2 = makeTestEpisode(2);
+  const h2 = createHarness(ep2, { sessionCircuit: sharedCircuit });
+  h2.controller.startPreparation();
+  await flushMicrotasks();
+  check(
+    h2.requests.length === 1 && h2.requests[0].payload.routePreference === "fallback",
+    "[WP-011.5 Queue 10a] Same-session new episode reuses open circuit and routes straight to fallback",
+  );
+  h.controller.dispose();
+  h2.controller.dispose();
+
+  sharedCircuit.reset();
+  const h3 = createHarness(ep2, { sessionCircuit: sharedCircuit });
+  h3.controller.startPreparation();
+  await flushMicrotasks();
+  check(
+    h3.requests.length === 1 && h3.requests[0].payload.routePreference === undefined,
+    "[WP-011.5 Queue 10b] Session circuit reset returns new episode to primary routing",
+  );
+  h3.controller.dispose();
+}
+
+// Queue 2 & 8 & 9: Long Retry-After both-model exhaustion skips 8s loops, enters timed captions cleanly, and manual retry respects circuit
+{
+  const sharedCircuit = createTtsSessionCircuit();
+  const ep = makeTestEpisode(3);
+  const h = createHarness(ep, { sessionCircuit: sharedCircuit });
+  h.controller.startPreparation();
+  await flushMicrotasks();
+
+  h.resolveSegment("seg_01", {
+    ok: false,
+    httpStatus: 429,
+    errorCode: "TTS_RATE_LIMITED",
+    message: "Daily quota reached.",
+    retryable: true,
+    retryAfterHeader: "68036",
+    quotaClass: "long_quota_wait",
+  });
+  await flushMicrotasks();
+
+  const snapExhausted = h.controller.getSnapshot();
+  const viewExhausted = deriveUnifiedLoadingView({ scriptPhase: "idle", episode: ep, queueSnapshot: snapExhausted, hostCount: 2 });
+  await h.advance(35_000);
+  check(
+    snapExhausted.outageState === "quota_exhausted" &&
+      snapExhausted.longQuotaExhausted === true &&
+      snapExhausted.cooldownActive === false &&
+      h.getPendingTimerCount() === 0 &&
+      h.requests.length === 1 &&
+      viewExhausted.stage === "audio_unavailable" &&
+      viewExhausted.isLongQuotaWait === true &&
+      viewExhausted.countdownText === null &&
+      viewExhausted.canContinueTimedCaptions === true &&
+      sharedCircuit.isPrimaryOpen(h.getNow()) === true,
+    "[WP-011.5 Queue 02,08] Long daily quota 429 skips 8s loop & multi-hour wait and offers timed captions immediately",
+  );
+
+  // Explicit timed captions start cleanly
+  h.controller.continueWithTimedCaptions();
+  await flushMicrotasks();
+  check(
+    h.controller.getSnapshot().audioMode === "timed-fallback" &&
+      h.controller.getSnapshot().isTimedFallbackActive === true &&
+      h.controller.getSnapshot().audioSourceSummary === "caption-only",
+    "[WP-011.5 Queue 08b] Explicit timed captions playback starts cleanly when both models hit daily quota",
+  );
+
+  // Both models exhausted opens allHostedDailyExhausted circuit and blocks manual & new-episode retry calls
+  const countBeforeManualBlocked = h.requests.length;
+  h.controller.retryHostedAudio();
+  h.controller.retryCurrentSegment();
+  await flushMicrotasks();
+  await h.advance(2000);
+  const epBlockedNext = makeTestEpisode(2);
+  const hBlockedNext = createHarness(epBlockedNext, { sessionCircuit: sharedCircuit });
+  hBlockedNext.controller.startPreparation();
+  await flushMicrotasks();
+  const snapBlockedNext = hBlockedNext.controller.getSnapshot();
+  check(
+    h.requests.length === countBeforeManualBlocked &&
+      snapExhausted.allHostedDailyExhausted === true &&
+      snapExhausted.hostedTtsState === "all_hosted_daily_exhausted" &&
+      viewExhausted.stepHeading === "Hosted voice limit reached for today" &&
+      viewExhausted.canRetryAudio === false &&
+      hBlockedNext.requests.length === 0 &&
+      snapBlockedNext.allHostedDailyExhausted === true &&
+      snapBlockedNext.episodeAudioSummaryLabel === "Hosted voice limit reached" &&
+      !String(snapBlockedNext.notice ?? "").includes("synchronized Kuromate audio active"),
+    "[WP-011.5 Queue 09a] All-hosted daily exhaustion blocks redundant retries & second-episode provider calls with cohesive notices",
+  );
+  h.controller.dispose();
+  hBlockedNext.controller.dispose();
+
+  // Primary-only circuit open (fallback still available) lets manual retry route to fallback
+  const primaryOnlyCircuit = createTtsSessionCircuit();
+  primaryOnlyCircuit.openPrimary(1_700_000_000_000, 68036);
+  const hPrimaryOnly = createHarness(makeTestEpisode(2), { sessionCircuit: primaryOnlyCircuit });
+  hPrimaryOnly.controller.startPreparation();
+  await flushMicrotasks();
+  const reqPrimaryOnly = hPrimaryOnly.requests[0];
+  primaryOnlyCircuit.reset();
+  hPrimaryOnly.controller.dispose();
+
+  // Circuit clears after daily reset window elapses
+  sharedCircuit.openAllHostedDailyExhausted(1_700_000_000_000, 600);
+  check(
+    reqPrimaryOnly.payload.routePreference === "fallback" &&
+      sharedCircuit.isAllHostedDailyExhausted(1_700_000_000_000) === true &&
+      sharedCircuit.isAllHostedDailyExhausted(1_700_000_000_000 + 601_000) === false,
+    "[WP-011.5 Queue 09b] Primary-only circuit routes manual/new attempts to fallback and daily circuit resets cleanly after expiry",
+  );
+}
+
+// Queue 16: Queue attaches stable voiceIdentityId on swapped-role hosts and isolates cache key
+{
+  const swappedEp = {
+    id: "ep_swapped_roles_q16",
+    title: "Swapped Roles",
+    topic: "Margins",
+    tone: "casual",
+    length: "quick",
+    status: "ready",
+    createdAt: "2026-11-26T00:00:00Z",
+    hosts: [
+      { id: "h_leo", name: "Leo", role: "explainer", voiceId: "kuromate_leo_v1", accentColor: "#2563EB", avatarId: "avatar_explainer_01" },
+      { id: "h_maya", name: "Maya", role: "learner", voiceId: "kuromate_maya_v1", accentColor: "#D97706", avatarId: "avatar_learner_02" },
+    ],
+    segments: [
+      { id: "seg_01", order: 0, speakerId: "h_leo", text: "Leo turn one.", emotion: "explaining", visualCue: { type: "none" } },
+      { id: "seg_02", order: 1, speakerId: "h_maya", text: "Maya turn two.", emotion: "curious", visualCue: { type: "none" } },
+    ],
+  };
+  const hSwap = createHarness(swappedEp);
+  hSwap.controller.startPreparation();
+  await flushMicrotasks();
+  hSwap.resolveSegment("seg_01", { ok: true, blob: new Blob(["leo"]), contentType: "audio/wav", durationMs: 1400, fallbackUsed: false });
+  await hSwap.advance(1600);
+  hSwap.resolveSegment("seg_02", { ok: true, blob: new Blob(["maya"]), contentType: "audio/wav", durationMs: 1400, fallbackUsed: false });
+  await flushMicrotasks();
+  const snapSwap = hSwap.controller.getSnapshot();
+  check(
+    hSwap.requests.length === 2 &&
+      hSwap.requests[0].payload.voiceIdentityId === "kuromate_leo_v1" &&
+      hSwap.requests[0].payload.role === "explainer" &&
+      hSwap.requests[1].payload.voiceIdentityId === "kuromate_maya_v1" &&
+      hSwap.requests[1].payload.role === "learner" &&
+      snapSwap.hostIdentities.h_leo === "kuromate_leo_v1" &&
+      snapSwap.hostIdentities.h_maya === "kuromate_maya_v1" &&
+      buildSegmentCacheKey("ep", swappedEp.segments[0], "explainer", "kuromate_leo_v1") !==
+        buildSegmentCacheKey("ep", swappedEp.segments[0], "explainer", "kuromate_maya_v1"),
+    "[WP-011.5 Queue 16] Queue passes stable host voiceIdentityId independently of swapped role and isolates cache keys",
+  );
+  hSwap.controller.dispose();
+}
+
+// Queue 7 & 12: Mixed primary/fallback synchronization + short-cooldown retry routes to fallback (no call multiplication)
+{
+  const hMix = createHarness(makeTestEpisode(3));
+  hMix.controller.startPreparation();
+  await flushMicrotasks();
+  hMix.resolveSegment("seg_01", {
+    ok: true,
+    blob: new Blob(["primary-1"]),
+    contentType: "audio/wav",
+    durationMs: 2500,
+    fallbackUsed: false,
+    quotaClass: "none",
+  });
+  await hMix.advance(1600);
+  // Turn 2 hits short 429 on first request -> cooldown -> retry sends routePreference: "fallback" (no multiplication!)
+  hMix.resolveSegment("seg_02", {
+    ok: false,
+    httpStatus: 429,
+    errorCode: "TTS_RATE_LIMITED",
+    message: "Temporary burst limit",
+    retryable: true,
+    retryAfterHeader: "3",
+    quotaClass: "short_cooldown",
+  });
+  await hMix.advance(3200);
+  const retryReq = hMix.requests[hMix.requests.length - 1];
+  hMix.resolveSegment("seg_02", {
+    ok: true,
+    blob: new Blob(["fallback-2"]),
+    contentType: "audio/wav",
+    durationMs: 2500,
+    fallbackUsed: true,
+    quotaClass: "none",
+  });
+  await flushMicrotasks();
+  const sMix = hMix.controller.getSnapshot();
+  const clsCheck = classifyRetryAfter("3");
+  check(
+    clsCheck.quotaClass === "short_cooldown" &&
+      retryReq.payload.routePreference === "fallback" &&
+      sMix.audioSourceSummary === "mixed" &&
+      sMix.primaryReadyCount === 1 &&
+      sMix.fallbackReadyCount === 1 &&
+      sMix.usedFallbackAudio === true &&
+      sMix.canStartPodcast === true,
+    "[WP-011.5 Queue 07,12] Mixed primary/fallback sync works cleanly and short-cooldown retry avoids call multiplication",
+  );
+  hMix.controller.dispose();
+}
+
+// Queue 13, 14, 15: No permanent storage, no speechSynthesis, no unrelated provider packages/code
+{
+  const srcFiles = [];
+  function walkSrc(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walkSrc(full);
+      else if (/\.(ts|tsx)$/.test(ent.name)) srcFiles.push(full);
+    }
+  }
+  walkSrc(path.join(root, "src"));
+  const forbiddenPattern =
+    /\b(?:azure|cognitiveservices|kokoro(?:-js)?|onnxruntime|phonemizer|espeak(?:-ng)?)\b|@huggingface\/transformers/i;
+  const pkgBad = forbiddenPattern.test(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const srcBad = srcFiles.filter((f) => {
+    const txt = fs.readFileSync(f, "utf8");
+    return forbiddenPattern.test(txt) || /sessionstorage\.setitem/i.test(txt);
+  });
+  const clientFiles = srcFiles.filter((f) => /[\\/](?:components|hooks)[\\/]/i.test(f));
+  const clientDeepgramRefs = clientFiles.filter((f) => /deepgram|deepgram-tts-client/i.test(fs.readFileSync(f, "utf8")));
+  check(
+    !pkgBad && srcBad.length === 0 && clientDeepgramRefs.length === 0,
+    "[WP-011.5 Queue 13,14,15] Deepgram stays server-only; Azure/Kokoro/persistent storage remain excluded",
+  );
 }
 
 console.log(`ALL ${passed} AUDIO QUEUE TESTS PASSED.`);
