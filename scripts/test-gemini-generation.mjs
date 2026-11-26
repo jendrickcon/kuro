@@ -46,7 +46,9 @@ module.registerHooks({
 
 const { CreateEpisodeRequestSchema, EpisodeSchema } = await import("../contracts/episode.schema.ts");
 const { classifyGeminiError, GeminiProviderError } = await import("../src/lib/episode/gemini-client.ts");
+const { buildGeminiEpisodeJsonSchema } = await import("../src/lib/episode/gemini-prompt.ts");
 const {
+  assembleEpisodeCandidate,
   generateGeminiEpisode,
   resolveGeminiModel,
   resolveGenerationMode,
@@ -222,23 +224,25 @@ check(
   );
 }
 
-// 8. Timeout error mapping (RequestTimeoutError -> 504 SCRIPT_GENERATION_FAILED)
+// 8. Timeout error mapping (RequestTimeoutError & RequestAbortedError -> 504 SCRIPT_GENERATION_FAILED)
 {
   const req = CreateEpisodeRequestSchema.parse({ input: "Explain active recall", tone: "casual", length: "quick", hostCount: 2 });
-  const res = await generateGeminiEpisode(req, {
-    apiKey: "test-key",
-    transport: async () => {
-      const err = new Error("aborted");
-      err.name = "RequestTimeoutError";
-      throw classifyGeminiError(err);
-    },
-  });
-  check(
-    res.httpStatus === 504 &&
-      res.response.ok === false &&
-      res.response.error.code === "SCRIPT_GENERATION_FAILED",
-    "timeout maps cleanly to 504 SCRIPT_GENERATION_FAILED",
-  );
+  for (const errName of ["RequestTimeoutError", "RequestAbortedError"]) {
+    const res = await generateGeminiEpisode(req, {
+      apiKey: "test-key",
+      transport: async () => {
+        const err = new Error("aborted");
+        err.name = errName;
+        throw classifyGeminiError(err);
+      },
+    });
+    check(
+      res.httpStatus === 504 &&
+        res.response.ok === false &&
+        res.response.error.code === "SCRIPT_GENERATION_FAILED",
+      `${errName} maps cleanly to 504 SCRIPT_GENERATION_FAILED`,
+    );
+  }
 }
 
 // 9. Empty response triggers retry and maps to 502 SCRIPT_GENERATION_FAILED if still empty
@@ -287,6 +291,56 @@ check(
     );
   });
   check(forbidden.length === 0, "no client component/hook references GEMINI_API_KEY, NEXT_PUBLIC_GEMINI, or @google/genai");
+}
+
+// 12. Compact Gemini JSON schema, flat cue normalization, and hostCount enforcement
+{
+  const reqThree = CreateEpisodeRequestSchema.parse({ input: "Explain inflation cleanly", tone: "serious", length: "quick", hostCount: 3 });
+  const schemaText = JSON.stringify(buildGeminiEpisodeJsonSchema(reqThree));
+  check(
+    !schemaText.includes('"minItems"') &&
+      !schemaText.includes('"maxItems"') &&
+      !schemaText.includes('"anyOf"'),
+    "Gemini structured schema omits minItems, maxItems, and anyOf to stay within state limit",
+  );
+
+  const reqTwo = CreateEpisodeRequestSchema.parse({ input: "Explain opportunity cost", tone: "casual", length: "quick", hostCount: 2 });
+  const flatDraft = twoHostDraft();
+  flatDraft.segments[0].visualCue = { type: "none", title: "", value: "" };
+  const candidate = assembleEpisodeCandidate(flatDraft, reqTwo);
+  check(EpisodeSchema.safeParse(candidate).success, "assembleEpisodeCandidate strips extraneous flat visualCue keys before EpisodeSchema validation");
+
+  let calls = 0;
+  let sawHostCountIssue = false;
+  const repairedDraft = {
+    title: "Three Host Inflation Breakdown",
+    hosts: [
+      { id: "host_maya", name: "Maya", role: "explainer" },
+      { id: "host_leo", name: "Leo", role: "learner" },
+      { id: "host_nina", name: "Nina", role: "skeptic" },
+    ],
+    segments: [
+      ...twoHostDraft().segments.slice(0, 7),
+      { id: "seg_08", order: 7, speakerId: "host_nina", text: "Wait, what about rent and bus passes?", emotion: "reacting", visualCue: { type: "none" } },
+    ],
+  };
+  const res = await generateGeminiEpisode(reqThree, {
+    apiKey: "test-key",
+    transport: async ({ userPrompt }) => {
+      calls += 1;
+      if (calls === 1) return JSON.stringify(twoHostDraft());
+      sawHostCountIssue = userPrompt.includes("Expected exactly 3 hosts, got 2");
+      return JSON.stringify(repairedDraft);
+    },
+  });
+  check(
+    calls === 2 &&
+      sawHostCountIssue &&
+      res.httpStatus === 200 &&
+      res.response.ok === true &&
+      res.response.episode.hosts.length === 3,
+    "hostCount mismatch triggers bounded repair retry and succeeds when corrected",
+  );
 }
 
 console.log(`Generation checks passed: ${passed}`);

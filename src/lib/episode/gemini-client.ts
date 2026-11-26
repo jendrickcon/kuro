@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 
 /** Verified current Flash-class balanced model from Gemini API dev docs (`@google/genai` >= 3.5.0). */
 export const DEFAULT_GEMINI_TEXT_MODEL = "gemini-4-hydrogen";
-export const GEMINI_REQUEST_TIMEOUT_MS = 25_000;
+export const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
 
 export type GeminiProviderErrorKind =
   | "missing_key"
@@ -57,7 +57,13 @@ export function classifyGeminiError(error: unknown): GeminiProviderError {
   const name = readErrorName(error);
   const status = readErrorStatus(error);
 
-  if (name === "AbortError" || name === "RequestTimeoutError" || status === 408 || status === 504) {
+  if (
+    name === "AbortError" ||
+    name === "RequestAbortedError" ||
+    name === "RequestTimeoutError" ||
+    status === 408 ||
+    status === 504
+  ) {
     return new GeminiProviderError(
       "timeout",
       "Gemini took too long to generate the conversation. Please try again.",
@@ -133,10 +139,23 @@ export function createGeminiTransport(apiKey: string): GeminiTextTransport {
             schema: request.jsonSchema,
           },
           generation_config: {
-            max_output_tokens: 4096,
+            thinking_level: "low",
+            max_output_tokens: 8192,
           },
         },
         {
+          retries: {
+            strategy: "attempt-count-backoff",
+            maxRetries: 2,
+            backoff: {
+              initialInterval: 800,
+              maxInterval: 2500,
+              exponent: 2,
+              maxElapsedTime: 8000,
+            },
+            retryConnectionErrors: false,
+          },
+          retry_codes: ["503"],
           timeout_ms: request.timeoutMs,
           signal: controller.signal,
         },
@@ -153,6 +172,13 @@ export function createGeminiTransport(apiKey: string): GeminiTextTransport {
 
       return text;
     } catch (error) {
+      if (controller.signal.aborted) {
+        throw new GeminiProviderError(
+          "timeout",
+          "Gemini took too long to generate the conversation. Please try again.",
+          true,
+        );
+      }
       throw classifyGeminiError(error);
     } finally {
       clearTimeout(timer);

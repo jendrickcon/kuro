@@ -1,21 +1,22 @@
 # WP-009 Handoff — Live Gemini Structured Script Generation
 
 ## 1. Status
-**Partially complete** — Server-side Gemini structured generation, Zod validation with bounded repair, timeout/error mapping, honest generated-vs-sample UI disclosure, `.env.example`, repeatable mocked test suite, and documentation are implemented and verified. **Live Gemini verification is blocked pending a server-side `GEMINI_API_KEY`.**
+**Complete** — Live Gemini script generation, structured schema compatibility, Zod validation with bounded 1-attempt repair, timeout/503-backoff hardening, honest generated-vs-sample UI disclosure, regression tests, and live UI checks passed on `feat/wp-009-gemini-script-generation` with `.env.local` server credentials.
 
 ## 2. Files Added or Changed (`feat/wp-009-gemini-script-generation`)
-- **Dependencies:** Installed `@google/genai` (`^3.6.1`) in [package.json](../../package.json) & `package-lock.json`; added `"test:generation"` script.
+- **Dependencies:** `@google/genai@^3.6.1` in `package.json` & `package-lock.json`; `"test:generation"` script (`21` checks).
 - **Server Gemini integration:**
-  - `src/lib/episode/gemini-prompt.ts`: System/user/repair prompts + Gemini `TextResponseFormat` JSON Schema aligned with `EpisodeSchema`.
-  - `src/lib/episode/gemini-client.ts`: Bounded `@google/genai` Interactions transport (`store: false`, `timeout_ms`, `AbortController`, sanitized error classifier).
-  - `src/lib/episode/gemini-service.ts`: `generateGeminiEpisode` (1 bounded repair retry, `status: "ready"`, server-assigned accents/IDs/topic), `resolveGenerationMode`, `resolveGeminiModel`.
-  - `src/app/api/episodes/route.ts`: Validates `CreateEpisodeRequestSchema`, runs live Gemini by default or `createMockEpisode` strictly when `KURO_GENERATION_MODE=mock` (no silent fallback).
-- **Minimal honest UI updates:** `src/app/page.tsx` (`"Timed preview"`), `src/components/kuro/creation-form.tsx` (`"2 Kuromates"`/`"3 Kuromates"` + honest description), `src/components/kuro/generation-status.tsx`, `src/components/kuro/form-error.tsx` (adds `"Try sample episode"` recovery action), `src/components/kuro/kuro-skeleton.tsx` (`"generated" | "mock" | "sample"` source), `src/components/kuro/player/episode-player.tsx`, and `src/components/kuro/player/player-notice.tsx`.
-- **Tests, env & docs:** `scripts/test-gemini-generation.mjs`, `.env.example` (names only: `GEMINI_API_KEY=`, `GEMINI_TEXT_MODEL=`, `KURO_GENERATION_MODE=`), `docs/wp-009/TECHNICAL_FINDINGS.md`, and this handoff.
+  - `src/lib/episode/gemini-prompt.ts`: System/user/repair prompts + compact flat `visualCue` JSON Schema avoiding Gemini constraint-state-limit errors.
+  - `src/lib/episode/gemini-client.ts`: Bounded `@google/genai` Interactions transport (`thinking_level: "low"`, `max_output_tokens: 8192`, `45_000` ms timeout, `RequestAbortedError -> 504`, `503`-only backoff `maxRetries: 2` / `maxElapsedTime: 8000`).
+  - `src/lib/episode/gemini-service.ts`: `normalizeVisualCue`, exact `request.hostCount` enforcement, 1 bounded repair retry, `status: "ready"`, and explicit `KURO_GENERATION_MODE=mock` opt-in.
+  - `src/app/api/episodes/route.ts`: Validates `CreateEpisodeRequestSchema`, runs live Gemini by default (no silent mock fallback).
+- **UI, env, tests & docs:** Minimal honest UI updates (`src/app/page.tsx`, `src/components/kuro/*`), `.env.example` (names only), `scripts/test-gemini-generation.mjs`, `docs/wp-009/TECHNICAL_FINDINGS.md`, and this handoff.
 
-## 3. Verification Evidence & Honest Boundaries
-- **Verified `[Verified]` / `[Mocked]`:** `npm ci`, `npm run typecheck`, `npm run lint`, `npm run test:schema`, `npm run test:generation`, `npm run build`, local HTTP endpoint tests (`503` live missing key, `400 INVALID_INPUT`, `200` with `KURO_GENERATION_MODE=mock`), browser smoke verification of recoverable error -> `"Try sample episode"`, and client-bundle/retired-term scans (exact counts in PR report).
-- **Blocked `[Blocked]`:** Live Gemini API response latency, real structured dialogue quality, and repair rates on live `gemini-4-hydrogen` could not be measured because `GEMINI_API_KEY` is unset. Zero TTS or audio generation added (`WP-010`).
+## 3. Live Verification Results & Remaining Limitations
+- **Verified temporary test model:** `gemini-3.5-flash-lite` (process-level override; `.env.local` primary model remains `gemini-3.8-flash` and code default remains `gemini-4-hydrogen`). Both `gemini-3.8-flash` and `gemini-4-hydrogen` returned temporary upstream HTTP `503 service_unavailable` high-demand errors during the check window (recorded as upstream capacity limitations, not implementation failures).
+- **Bounded live runs:** Test A (`2` Kuromates casual: `4149 ms`, `1` attempt, `0` repairs, `9` segments, `1` `fact-card`, Zod pass, `ep_gen_33c16b5713fe`) and Test B (`3` Kuromates serious: `6532 ms`, `1` attempt, `0` repairs, `8` segments, `1` `fact-card`, Zod pass, `ep_gen_6b14f9b3b37e`) both returned HTTP `200`, `status: "ready"`.
+- **Browser & regression:** Live form -> `"Generated episode"` player (no sample/mock badge), short-input preservation (`0` API calls), `320x640` mobile check (`0` overflow), `typecheck`, `lint`, `test:schema` (`11`), `test:generation` (`21`), `build`, and secret/legacy-naming scans all passed.
+- **Remaining limitations:** No segmented TTS or audio stitching yet (deferred to `WP-010`); `gemini-3.8-flash` / `gemini-4-hydrogen` live calls can be spot-checked once upstream `503` demand clears.
 
 ## 4. Exact Next Action
-Review and merge this WP-009 PR, set server-only `GEMINI_API_KEY` in `.env.local` (and Vercel project env) to run the bounded 2-Kuromate & 3-Kuromate live smoke verification, then assign `WP-010` segmented TTS.
+Review and merge **PR #4** (`https://github.com/jendrickcon/kuro/pull/4`) into `main`, then authorize **WP-010** from the updated `main`.

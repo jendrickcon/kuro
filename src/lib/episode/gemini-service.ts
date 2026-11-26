@@ -74,6 +74,33 @@ function parseJsonObjectSafe(rawText: string): { ok: true; value: unknown } | { 
   }
 }
 
+function normalizeVisualCue(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return raw;
+  }
+
+  const cue = raw as Record<string, unknown>;
+  switch (cue.type) {
+    case "none":
+      return { type: "none" };
+    case "comparison":
+      return { type: "comparison", title: cue.title, left: cue.left, right: cue.right };
+    case "timeline":
+      return { type: "timeline", title: cue.title, points: cue.points };
+    case "process":
+      return { type: "process", title: cue.title, steps: cue.steps };
+    case "fact-card":
+      return {
+        type: "fact-card",
+        title: cue.title,
+        value: cue.value,
+        explanation: cue.explanation,
+      };
+    default:
+      return raw;
+  }
+}
+
 /** Merges Gemini draft fields with server-controlled metadata and host palette tokens. */
 export function assembleEpisodeCandidate(
   rawDraft: unknown,
@@ -102,6 +129,19 @@ export function assembleEpisodeCandidate(
     };
   });
 
+  const normalizedSegments = Array.isArray(draft.segments)
+    ? draft.segments.map((item) => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) {
+          return item;
+        }
+        const segObj = item as Record<string, unknown>;
+        return {
+          ...segObj,
+          visualCue: normalizeVisualCue(segObj.visualCue),
+        };
+      })
+    : draft.segments;
+
   return {
     id: `ep_gen_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
     title: draft.title,
@@ -110,7 +150,7 @@ export function assembleEpisodeCandidate(
     length: request.length,
     status: "ready",
     hosts: enrichedHosts,
-    segments: draft.segments,
+    segments: normalizedSegments,
     createdAt: new Date().toISOString(),
   };
 }
@@ -217,6 +257,16 @@ export async function generateGeminiEpisode(
       const candidate = assembleEpisodeCandidate(parsedJson.value, request);
       const checked = EpisodeSchema.safeParse(candidate);
       if (checked.success) {
+        if (checked.data.hosts.length !== request.hostCount) {
+          lastIssues = [
+            {
+              path: "hosts",
+              message: `Expected exactly ${request.hostCount} hosts, got ${checked.data.hosts.length}.`,
+            },
+          ];
+          continue;
+        }
+
         const episode: Episode = checked.data;
         const success = CreateEpisodeResponseSchema.parse({
           ok: true,

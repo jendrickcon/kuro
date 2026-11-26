@@ -34,6 +34,7 @@ export function buildEpisodeSystemInstruction(): string {
     "- Order segments contiguously starting at order = 0.",
     "- Include 0 to 3 meaningful visualCue objects total across the episode; NEVER put meaningful cues on consecutive turns.",
     "- Use visualCue { type: 'none' } for all other turns.",
+    "- Match visualCue fields strictly to type: none ({type}); comparison ({type,title,left,right}); timeline ({type,title,points}); process ({type,title,steps}); fact-card ({type,title,value,explanation}).",
     "- Return ONLY valid JSON matching the requested schema.",
   ].join("\n");
 }
@@ -98,15 +99,14 @@ export function buildRepairPrompt(
 
 /**
  * JSON Schema passed to Gemini structured outputs (`TextResponseFormat.schema`).
- * Intentionally uses supported structural fields (`minItems`/`maxItems`, `enum`, `anyOf`)
- * without `minLength`/`maxLength` keywords ignored/disallowed by Gemini JSON Schema subset;
- * authoritative `EpisodeSchema.safeParse()` enforces all bounds afterward.
+ * Intentionally keeps the schema compact—omitting array `minItems`/`maxItems` and
+ * per-segment `anyOf` unions that trigger Gemini's constraint-state-limit 400 error—while
+ * prompt instructions, `normalizeVisualCue`, exact `hostCount` check, and `EpisodeSchema`
+ * enforce all structural bounds afterward.
  */
 export function buildGeminiEpisodeJsonSchema(
   request: CreateEpisodeRequest,
 ): Record<string, unknown> {
-  const minSegs = request.length === "quick" ? 8 : 12;
-  const maxSegs = request.length === "quick" ? 10 : 15;
   const roleEnum =
     request.hostCount === 2 ? [...VALID_TWO_HOST_ROLES] : [...VALID_THREE_HOST_ROLES];
 
@@ -120,6 +120,16 @@ export function buildGeminiEpisodeJsonSchema(
     },
   };
 
+  const labeledDescriptionItem = {
+    type: "object",
+    additionalProperties: false,
+    required: ["label", "description"],
+    properties: {
+      label: { type: "string" },
+      description: { type: "string" },
+    },
+  };
+
   return {
     type: "object",
     additionalProperties: false,
@@ -128,8 +138,6 @@ export function buildGeminiEpisodeJsonSchema(
       title: { type: "string", description: "Concise episode title, max 80 characters." },
       hosts: {
         type: "array",
-        minItems: request.hostCount,
-        maxItems: request.hostCount,
         items: {
           type: "object",
           additionalProperties: false,
@@ -143,8 +151,6 @@ export function buildGeminiEpisodeJsonSchema(
       },
       segments: {
         type: "array",
-        minItems: minSegs,
-        maxItems: maxSegs,
         items: {
           type: "object",
           additionalProperties: false,
@@ -159,82 +165,28 @@ export function buildGeminiEpisodeJsonSchema(
               enum: ["neutral", "curious", "explaining", "reacting"],
             },
             visualCue: {
-              anyOf: [
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["type"],
-                  properties: { type: { type: "string", enum: ["none"] } },
+              type: "object",
+              additionalProperties: false,
+              required: ["type"],
+              properties: {
+                type: {
+                  type: "string",
+                  enum: ["none", "comparison", "timeline", "process", "fact-card"],
                 },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["type", "title", "left", "right"],
-                  properties: {
-                    type: { type: "string", enum: ["comparison"] },
-                    title: { type: "string" },
-                    left: comparisonSide,
-                    right: comparisonSide,
-                  },
+                title: { type: "string" },
+                left: comparisonSide,
+                right: comparisonSide,
+                points: {
+                  type: "array",
+                  items: labeledDescriptionItem,
                 },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["type", "title", "points"],
-                  properties: {
-                    type: { type: "string", enum: ["timeline"] },
-                    title: { type: "string" },
-                    points: {
-                      type: "array",
-                      minItems: 2,
-                      maxItems: 4,
-                      items: {
-                        type: "object",
-                        additionalProperties: false,
-                        required: ["label", "description"],
-                        properties: {
-                          label: { type: "string" },
-                          description: { type: "string" },
-                        },
-                      },
-                    },
-                  },
+                steps: {
+                  type: "array",
+                  items: labeledDescriptionItem,
                 },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["type", "title", "steps"],
-                  properties: {
-                    type: { type: "string", enum: ["process"] },
-                    title: { type: "string" },
-                    steps: {
-                      type: "array",
-                      minItems: 3,
-                      maxItems: 5,
-                      items: {
-                        type: "object",
-                        additionalProperties: false,
-                        required: ["label", "description"],
-                        properties: {
-                          label: { type: "string" },
-                          description: { type: "string" },
-                        },
-                      },
-                    },
-                  },
-                },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["type", "title", "value", "explanation"],
-                  properties: {
-                    type: { type: "string", enum: ["fact-card"] },
-                    title: { type: "string" },
-                    value: { type: "string" },
-                    explanation: { type: "string" },
-                  },
-                },
-              ],
+                value: { type: "string" },
+                explanation: { type: "string" },
+              },
             },
           },
         },
