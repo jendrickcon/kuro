@@ -1,7 +1,7 @@
 # WP-011.5 — Final Handoff (TTS Resilience and Hosted Fallback)
 
 ## Status
-- **Status (Pre-Vercel Preview Check):** Implementation & local verification complete; configuring Vercel env and verifying Preview next (`Partially complete` if Preview live Flash-Lite quota remains capped at 10 RPD after local Matrix C Turn 3 exhaustion).
+- **Status:** `Complete` — runtime fallback, tests, production build, local Matrix A–D, security scans, Vercel env setup, and live hosted Vercel Preview fallback + audio playback verification all passed.
 - **Branch:** `audit/wp-011-5-tts-resilience` (PR [#7](https://github.com/jendrickcon/kuro/pull/7), kept **OPEN**, zero changes to `main` `d6575dac99d83ba21305ed9191e02e9086c0fdfc`).
 
 ## Files Changed
@@ -28,9 +28,10 @@
 - **Matrix D (`127.0.0.1:3002` Mocked Proxy):** Verified deterministic both-model `long_quota_wait` (`1` call, `Daily limit`, no countdown timer -> `Continue with timed captions`) and `short_cooldown` (`3s` countdown -> `2` calls -> recoverable timed captions) with `0` console errors.
 
 ## Vercel Preview Evidence
-- **Environment Variable:** `GEMINI_TTS_FALLBACK_MODEL=gemini-3.8-flash-lite-tts` configured on Vercel `preview` + `production`.
-- **Preview Verification:** Pending final push & Preview inspection (updated immediately after check).
+- **Environment Variable:** `GEMINI_TTS_FALLBACK_MODEL=gemini-3.8-flash-lite-tts` added (`encrypted`) on Vercel for `preview` and `production` alongside existing server vars (zero `NEXT_PUBLIC_*` added).
+- **Verified Preview Deployment:** [`dpl_A1gwQk83aCdYRSfbq3oC9GFXZcjL`](https://vercel.com/enuhri/kuro/A1gwQk83aCdYRSfbq3oC9GFXZcjL) (`https://kuro-mu2vdv30h-enuhri.vercel.app`, `READY`) for code commit `01a692fbe06381b7c78878699c11ce4b5a8c5542`.
+- **Hosted Browser & Runtime Logs (`iad1`):** `seg_01` switched once after primary `429` (`retryAfterSeconds=64219`, `providerAttempts=2`) -> Flash-Lite `200` WAV (`425,308 B`, `8,700 ms`, `2,665 ms`); `seg_02` skipped primary (`routePreference="fallback"`, `providerAttempts=1`) -> Flash-Lite `200` WAV (`409,468 B`, `8,370 ms`, `2,344 ms`); real audio played Turns 1–2 with episode fallback notice; `seg_03` hit Flash-Lite `429` (`64190s`) and recovered cleanly into `Timed captions mode` at `1280×800` and `320×640` with `0` runtime/console/Google leaks.
 
 ## Pull Request & Next Action
-- **PR #7:** [https://github.com/jendrickcon/kuro/pull/7](https://github.com/jendrickcon/kuro/pull/7) — stays **OPEN** for owner review and subjective ear check (`Flash-Lite` EN + Taglish roles).
-- **Next Action:** Complete Vercel Preview verification, sync final commit hash + Preview log evidence below, and hand back PR #7 OPEN.
+- **PR #7:** [https://github.com/jendrickcon/kuro/pull/7](https://github.com/jendrickcon/kuro/pull/7) — title `feat(wp-011.5): add resilient Kuro TTS fallback`, kept **OPEN** for owner review and subjective ear check (`Flash-Lite` EN + Taglish roles).
+- **Next Action:** Owner reviews PR #7 and decides whether to merge into `main`.
