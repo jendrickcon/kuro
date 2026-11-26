@@ -8,7 +8,7 @@ import {
   type Tone,
 } from "@contracts/episode.schema";
 import { FieldError } from "@/components/kuro/form-error";
-import { KurozoPreview } from "@/components/kuro/kurozo-preview";
+import { KuromatePreview } from "@/components/kuro/kuromate-preview";
 import { OptionSelector } from "@/components/kuro/option-selector";
 
 const STUDY_EXAMPLE =
@@ -60,7 +60,7 @@ export function CreationForm({
 
   return (
     <div className="space-y-4">
-      <KurozoPreview hostCount={hostCount} />
+      <KuromatePreview hostCount={hostCount} />
 
       <form
         onSubmit={handleSubmit}

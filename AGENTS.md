@@ -1,6 +1,6 @@
 # AGENTS.md — Collaboration & Repository Operating Guide
 
-Read [README.md](./README.md) and [SPEC.md](./SPEC.md) before starting work. Keep the product name strictly **Kuro** (never `Kuro AI`, `KuroCast`, or `Klaro`) and the tagline strictly **"More voices. Clearer ideas."**
+Read [README.md](./README.md) and [SPEC.md](./SPEC.md) before starting work. Keep the product name strictly **Kuro** (never `Kuro AI`, `KuroCast`, or `Klaro`), the tagline strictly **"More voices. Clearer ideas."**, and host characters strictly **Kuromate** (singular) / **Kuromates** (plural).
 
 ## 1. Team Lanes & Agent Families
 
@@ -16,8 +16,10 @@ Read [README.md](./README.md) and [SPEC.md](./SPEC.md) before starting work. Kee
 ## 2. Branch, Documentation & Secret Rules
 
 - `main` must stay reviewable and deployable. No direct commits to `main` after initial repository setup without explicit Project Owner authorization.
-- Use one dedicated branch per approved WP (e.g., `docs/wp-001-foundation`, `research/wp-002-ui-ux`, `spike/wp-003-ai-audio`, `feat/wp-004-app-skeleton`, `feat/wp-005-creation-flow`, `feat/wp-006-mock-contract`, `feat/wp-007-player`). Do not pre-create unused branches.
-- No automatic merges into `main` and no force-pushes to shared branches.
+- Use one dedicated branch per approved WP (e.g., `docs/wp-001-foundation`, `research/wp-002-ui-ux`, `spike/wp-003-ai-audio`, `feat/wp-004-app-skeleton`, `feat/wp-005-creation-flow`, `feat/wp-007-multi-host-player`). Do not pre-create unused branches.
+- **Standard PR workflow:** Work on one package branch -> verify locally -> commit and push -> open a titled, described GitHub PR -> **leave the PR OPEN** -> report the PR number and URL -> stop for Project Owner review. Only the owner decides whether to merge or close.
+- **PR boundary:** Antigravity must never merge, close, reopen, or delete a pull request unless the project owner explicitly authorizes that exact action. No force-pushes to shared branches.
+- **Onboarding & creative freedom:** New contributor guides live in [CONTRIBUTING.md](./CONTRIBUTING.md) and `docs/contributing/`. Contributors and their AIs have creative freedom inside their assigned package, accepted contracts, exclusions, and verification gates.
 - **Doc size limits:** Keep `README.md < 80` lines, `SPEC.md < 180` lines, and `AGENTS.md < 120` lines. Do not add extra planning docs unless explicitly requested by the Project Owner.
 - **Secrets:** Never commit secrets, never place API keys in client-side code, never put private credentials in `NEXT_PUBLIC_*`, and keep `.env.example` free of real values.
 
