@@ -1,7 +1,7 @@
-# WP-011 Consolidated Handoff — Full Episode Audio Queue & Synchronization
+# WP-011 Consolidated Handoff — Full Episode Audio Queue, Synchronization & Transient Recovery
 
 ## Status
-**Complete** — Generated full quick episodes play hosted Kuromate audio automatically in dialogue order with max-2 prefetching, synchronized Kuromates/captions/visuals, bounded `Retry-After` recovery, resilient fallback, clean memory cleanup, and passing local + browser verification.
+**Complete** — Generated full quick episodes play hosted Kuromate audio in dialogue order with max-2 prefetching, synchronized Kuromates/captions/visuals, bounded `Retry-After` recovery, **transient failure recovery across Replay and targeted `Retry voice`**, clean object-URL cleanup, and passing local, proxy-browser, and automated verification.
 
 ## Files Changed
 - **New:** [retry-after.ts](../../src/lib/tts/retry-after.ts), [episode-audio-queue-engine.ts](../../src/lib/tts/episode-audio-queue-engine.ts), [use-episode-audio-queue.ts](../../src/hooks/use-episode-audio-queue.ts), [audio-status-bar.tsx](../../src/components/kuro/player/audio-status-bar.tsx), [test-audio-queue.mjs](../../scripts/test-audio-queue.mjs), [AUDIO_QUEUE_FINDINGS.md](./AUDIO_QUEUE_FINDINGS.md), `docs/wp-011/WP-011_HANDOFF.md`.
@@ -9,22 +9,20 @@
 - **Removed (superseded):** `src/hooks/use-segment-tts-preview.ts`, `src/components/kuro/player/segment-voice-preview.tsx`.
 - **Untouched protected files:** `contracts/episode.schema.ts`, `src/lib/episode/*`, `src/app/api/episodes/route.ts`, `src/app/api/tts/route.ts`, `.env.local` (ignored). Zero new npm packages added.
 
-## Functional Result & Failure Behavior
-- Pressing **Play** prioritizes turn 0, prefetches within lookahead `2` at `MAX_TTS_CONCURRENCY = 2`, and drives turn progression via real `<audio>` `ended` events.
-- **Pause/Resume** preserves `currentTime` without refetch; **Prev/Next/Restart/Replay** cancel stale timers/events and reuse session-cached clips (`0` extra fetches).
-- `429` triggers a shared clamped `1s–30s` `Retry-After` cooldown; `2` consecutive exhausted capacity fails or any missing-key/auth error halts background bursts cleanly (`Continue with timed captions`, `Retry hosted audio`, `Return to form`); single-turn failures keep captions/visuals usable; autoplay blocks show `Tap to continue audio`.
+## Transient Recovery & Bounds (PR #6 Patch)
+- **Failure classification (`SegmentFailureClass`):** Separates recoverable transient failures (`429`, `503`, timeouts, network errors, retryable audio failures) from permanent failures (`TTS_NOT_CONFIGURED`, auth `401`/`403`, invalid input, safety policy, explicit `retryable: false`).
+- **Replay recovery:** Preserves every cached clip (`0` refetches), resets only eligible transient failures (`idle`) with fresh `manualRetriesUsedInCycle = 0`, aborts stale pre-replay fetches via `replayCycleToken`, keeps active `Retry-After` cooldowns intact, narrows post-failure lookahead to `1`, and preserves permanent failures as timed captions.
+- **Targeted `Retry voice`:** Targets strictly `entries[currentIndex]` (`0` unrelated requests, preserves episode cache & cooldown), shows disabled `"Retry available in Xs"` countdown during cooldown, deduplicates clicks, enforces `MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE = 1` (`MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE = 3`), clears `"Audio unavailable — showing caption"` on recovery (and prepares `"Preparing <HostName>’s voice"`), and returns `"Voice unavailable again — continuing with captions."` on second failure.
+- **`provider_outage` cooldown fix:** Keeps active `Retry-After` cooldown running when `provider_outage` trips so `Retry hosted audio` respects cooldown before firing manual retries.
 
-## Live & Mocked Evidence
-- **Live 2-Kuromate quick episode (`Understanding Opportunity Cost`, 8 turns):** `6/8` real WAV clips (`6.85–9.56s`, `3,813 ms` avg latency), `maxConcurrency = 2`, shared `429` recovery, full `8/8` completion, `0` Replay refetches, `0` console/hydration errors.
-- **Live 3-Kuromate + 4 viewports (`320x640`, `390x844`, `768x900`, `1280x800`):** Side-by-side Kuromates, zero overflow or button overlap, verified `Tab` focus order.
-- **Missing-key server (`localhost:3001`):** `503 TTS_NOT_CONFIGURED` halted at `<= 2` calls (`Continue with timed captions` succeeded).
-- **Mocked tests:** `test:schema` (`11`), `test:generation` (`33`), `test:tts` (`28`), and `test:audio-queue` (`33` assertions covering all `40` WP-011 checks + `17` failure scenarios) all pass.
+## Verification Evidence
+- **Live `/api/tts` browser test (`localhost:3000`, Sample Episode):** Live Gemini free-tier quota returned HTTP `429` across `4` bounded requests (`~9s` spacing), tripping `"Hosted audio unavailable"` cleanly (`0` retry storm, `0` console/hydration errors, `0` client calls to `generativelanguage.googleapis.com`, `320x640` mobile check zero overflow).
+- **Deterministic local proxy browser verification (`localhost:3002` -> unmodified compiled server `127.0.0.1:3001`):**
+  - *Replay recovery:* Pass 1 `7 of 9 turns ready` (`seg_02` & `seg_05` mocked `429 Retry-After: 2`) -> **Replay** completed **`9 of 9 turns ready`** with `0` refetches for all `7` cached turns (`totalCalls = 13`, `maxConcurrent = 2`), synchronized speakers/captions, and cleared `"Audio unavailable — showing caption"`.
+  - *Targeted Retry & failure bound:* Paused Turn 2 verified `"Retry available in 4s"` -> `"3s"` countdown + `320x640` layout (`305px <= 320px`), `Retry voice` called only `seg_02` (`callsBySegment.seg_02 = 3`) and recovered `2 -> 3 of 9 turns ready`; second-failure `503` showed `"Voice unavailable again — continuing with captions."` and disabled Retry at `3` calls max (`0` console/hydration errors).
+- **Automated suites & quality:** `npm ci` (`0` vulnerabilities), `typecheck`, `lint`, `test:schema` (`11/11`), `test:generation` (`33/33`), `test:tts` (`28/28`), `test:audio-queue` (`50/50` covering baseline + `P1`–`P25`), `next build`, `git diff --check`, and secret/bundle/`speechSynthesis`/storage/line-limit scans passed. Zero `.wav`/`.mp3`/`.py` tracked.
 
-## Quality, Security & PR Evidence
-- `npm ci`, `typecheck`, `lint`, all `4` test suites, `next build`, and secret/bundle/`speechSynthesis`/storage/stale-naming/line-limit scans passed. Zero `.wav`/`.py` tracked.
-- **Stitching spike:** Verified (`2` live clips -> stripped `C2PA` -> temporary `9,030 ms` WAV -> temp deleted).
-- **Base `main`:** `9919142c26fdfd98fa2b553d333ba76ac3e11d97` · **Branch:** `feat/wp-011-full-episode-audio` (PR remains **OPEN**).
-
-## Deferred Scope & Immediate Next Action
-- **Deferred:** Persistent audio storage, production combined audio download UI, offline audio, video generation.
-- **Next action:** Review open WP-011 PR, verify Vercel Preview (ensure `GEMINI_API_KEY` and `GEMINI_TTS_MODEL=gemini-3.8-flash-tts` are configured in Preview), listen through a generated quick episode end-to-end, and merge when satisfied.
+## PR State & Remaining Action
+- **Base `main`:** `9919142c26fdfd98fa2b553d333ba76ac3e11d97` · **Branch:** `feat/wp-011-full-episode-audio` (PR #6 remains **OPEN**).
+- **Known limitation:** Live hosted Gemini TTS free-tier quota may still return `429`; Vercel Preview sits behind Deployment Protection (`401` unauthenticated).
+- **Next action:** Review open PR #6 in an authenticated Vercel Preview session under live quota headroom (`Play` -> fallback if `429` -> `Replay` / `Retry voice` recovery) and merge when satisfied.

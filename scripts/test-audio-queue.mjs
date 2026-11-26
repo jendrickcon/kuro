@@ -45,8 +45,15 @@ module.registerHooks({
   },
 });
 
-const { createEpisodeAudioQueueEngine, MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT, MAX_AUTOMATIC_PROVIDER_CALLS_PER_SEGMENT, MAX_TTS_CONCURRENCY, PREFETCH_LOOKAHEAD } =
-  await import("../src/lib/tts/episode-audio-queue-engine.ts");
+const {
+  createEpisodeAudioQueueEngine,
+  MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT,
+  MAX_AUTOMATIC_PROVIDER_CALLS_PER_SEGMENT,
+  MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE,
+  MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE,
+  MAX_TTS_CONCURRENCY,
+  PREFETCH_LOOKAHEAD,
+} = await import("../src/lib/tts/episode-audio-queue-engine.ts");
 const { clampCooldownMs, DEFAULT_RATE_LIMIT_COOLDOWN_MS, MAX_COOLDOWN_MS, MIN_COOLDOWN_MS, parseRetryAfterMs } =
   await import("../src/lib/tts/retry-after.ts");
 
@@ -518,8 +525,8 @@ function createHarness(episode = makeTestEpisode(8)) {
     ok: false,
     httpStatus: 502,
     errorCode: "TTS_AUDIO_INVALID",
-    message: "Invalid WAV",
-    retryable: false,
+    message: "Malformed audio payload",
+    retryable: true,
   });
   h.resolveSegment("seg_04");
   await flushMicrotasks();
@@ -772,6 +779,382 @@ function createHarness(episode = makeTestEpisode(8)) {
   check(badSpeech.length === 0, "37. Zero browser speechSynthesis in src/");
   check(badStorage.length === 0, "38. Zero persistent browser audio storage in src/");
   check(trackedAudio.length === 0, "39. Zero generated audio or Python files tracked in git");
+}
+
+// =========================================================================
+// PR #6 PATCH TESTS (25 checks: Transient Recovery on Replay & Targeted Retry)
+// =========================================================================
+
+// P1, P2, P8-P11, P20, P21, P23. Replay preserves cached clips, resets 429 failures, obeys lookahead & concurrency<=2, completes all 8 turns
+{
+  const ep = makeTestEpisode(8);
+  const h = createHarness(ep);
+  h.controller.play();
+  await flushMicrotasks();
+
+  // Pass 1: seg_01 OK, seg_02 fails 429 (exhausted after 1 retry), seg_03 OK, seg_04 OK,
+  // seg_05 fails 429 (exhausted after 1 retry), seg_06..seg_08 OK -> 6/8 ready
+  h.resolveSegment("seg_01");
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+  await flushMicrotasks();
+  h.resolveSegment("seg_03");
+  await flushMicrotasks();
+  await h.advance(2100); // cooldown expires -> retry seg_02 -> fail 429 again
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+  await flushMicrotasks();
+
+  let safetyLoops = 0;
+  while (h.controller.getSnapshot().status !== "complete" && safetyLoops++ < 40) {
+    const snap = h.controller.getSnapshot();
+    if (snap.cooldownActive) {
+      await h.advance(2100);
+      continue;
+    }
+    let resolvedAny = false;
+    for (const seg of snap.segments) {
+      if (seg.status === "generating") {
+        if (seg.segmentId === "seg_05") {
+          h.resolveSegment("seg_05", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "2" });
+        } else {
+          h.resolveSegment(seg.segmentId);
+        }
+        resolvedAny = true;
+      }
+    }
+    if (resolvedAny) {
+      await flushMicrotasks();
+      continue;
+    }
+    if (snap.currentSegmentFailed) {
+      await h.advance(9000);
+    } else if (snap.status === "playing") {
+      h.getActiveCallbacks().onEnded();
+      await flushMicrotasks();
+    } else {
+      await h.advance(2100);
+    }
+  }
+  const endPass1 = h.controller.getSnapshot();
+  check(
+    endPass1.status === "complete" &&
+      endPass1.readyCount === 6 &&
+      endPass1.failedCount === 2 &&
+      endPass1.segments[1].failureClass === "capacity" &&
+      endPass1.segments[4].failureClass === "capacity",
+    "P-setup: first pass finishes at 6/8 ready with seg_02 & seg_05 classified as capacity failures",
+  );
+
+  // Start Replay -> Turn 0 plays immediately from cache; ONLY seg_02 is initially requested inside lookahead [0..2]!
+  const callsBeforeReplay = h.requests.length;
+  h.controller.replay();
+  await flushMicrotasks();
+  const replayStartCalls = h.requests.slice(callsBeforeReplay);
+  const sReplayStart = h.controller.getSnapshot();
+  check(
+    sReplayStart.status === "playing" &&
+      sReplayStart.currentIndex === 0 &&
+      sReplayStart.replayCycle === 1 &&
+      sReplayStart.readyCount === 6 &&
+      replayStartCalls.length === 1 &&
+      replayStartCalls[0].payload.segmentId === "seg_02" &&
+      h.getMaxConcurrency() <= 2,
+    "P1,P2,P8,P9,P11. Replay preserves 6 cached clips, requeues only seg_02 inside lookahead [0..2], and respects concurrency <= 2",
+  );
+
+  // Recover seg_02 -> Play turns 0 -> 1 -> 2 -> 3 -> 4 (recover seg_05) -> 5 -> 6 -> 7 -> COMPLETE (8/8)!
+  h.resolveSegment("seg_02");
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 0 -> 1 (recovered seg_02 plays!)
+  await flushMicrotasks();
+  const recoveredTurn1 = h.controller.getSnapshot();
+  check(
+    recoveredTurn1.currentIndex === 1 &&
+      recoveredTurn1.currentSegmentHasAudio === true &&
+      recoveredTurn1.currentSegmentFailed === false &&
+      recoveredTurn1.activeSpeakerId === "h_lrn" &&
+      recoveredTurn1.activeHost?.role === "learner" &&
+      recoveredTurn1.currentSegment?.visualCue.type === "fact-card",
+    "P20. Recovered clip on Replay plays with correct Kuromate, caption, and visual synchronization",
+  );
+
+  h.getActiveCallbacks().onEnded(); // 1 -> 2
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 2 -> 3 (inside [3..5] lookahead seg_05 gets fetched!)
+  await flushMicrotasks();
+  h.resolveSegment("seg_05");
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 3 -> 4 (recovered seg_05)
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 4 -> 5
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 5 -> 6
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 6 -> 7
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 7 -> complete
+  await flushMicrotasks();
+
+  const endPass2 = h.controller.getSnapshot();
+  const postReplaySegments = h.requests.slice(callsBeforeReplay).map((r) => r.payload.segmentId);
+  check(
+    endPass2.status === "complete" &&
+      endPass2.readyCount === 8 &&
+      endPass2.failedCount === 0 &&
+      postReplaySegments.length === 2 &&
+      postReplaySegments.includes("seg_02") &&
+      postReplaySegments.includes("seg_05"),
+    "P21. Replay completes all 8/8 turns making zero fetches for cached clips and regenerating only seg_02 & seg_05",
+  );
+
+  h.controller.dispose();
+  const allRevokedOnce = Array.from(h.urlStats.createdCounts.keys()).every(
+    (u) => h.urlStats.revokedCounts.get(u) === 1,
+  );
+  check(h.urlStats.activeUrls.size === 0 && allRevokedOnce, "P23. Object URLs revoked exactly once across Replay recovery");
+}
+
+// P3, P4, P10, P19. Replay resets 503 & timeout, honors active Retry-After cooldown, ignores late pre-replay resolves
+{
+  const h = createHarness(makeTestEpisode(5));
+  h.controller.play();
+  await flushMicrotasks();
+  h.resolveSegment("seg_01");
+  await flushMicrotasks(); // seg_01 ready & playing; seg_03 starts in lookahead
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Unavailable", retryable: true });
+  await flushMicrotasks();
+  await h.advance(2100);
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Unavailable", retryable: true });
+  await flushMicrotasks();
+  h.resolveSegment("seg_03"); // succeeds after seg_02 fails, resetting consecutiveCapacityFailures to 0
+  await flushMicrotasks();
+
+  h.getActiveCallbacks().onEnded(); // 0 -> 1 (seg_02 timed; lookahead=2 starts seg_04)
+  await flushMicrotasks();
+  await h.advance(9000); // 1 -> 2 (seg_03 plays cached; lookahead=2 starts seg_05 alongside seg_04)
+  h.resolveSegment("seg_04", { ok: false, httpStatus: 504, errorCode: "TTS_TIMEOUT", message: "Timeout", retryable: true });
+  await flushMicrotasks();
+  await h.advance(2100);
+  h.resolveSegment("seg_04", { ok: false, httpStatus: 504, errorCode: "TTS_TIMEOUT", message: "Timeout", retryable: true });
+  await flushMicrotasks();
+  // Leave seg_05 with an active 429 cooldown just before replay
+  h.resolveSegment("seg_05", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "6" });
+  await flushMicrotasks();
+
+  const callsBeforeReplay = h.requests.length;
+  h.controller.replay();
+  await flushMicrotasks();
+
+  const replaySnap = h.controller.getSnapshot();
+  check(
+    replaySnap.cooldownActive === true &&
+      h.requests.length === callsBeforeReplay &&
+      replaySnap.segments[1].status === "idle" &&
+      replaySnap.segments[3].status === "idle",
+    "P3,P4,P10. Replay resets 503/timeout failures while respecting active Retry-After cooldown",
+  );
+
+  await h.advance(6100);
+  const postCooldownReqs = h.requests.slice(callsBeforeReplay).map((r) => r.payload.segmentId);
+  check(
+    postCooldownReqs.includes("seg_02"),
+    "P10b. Replay resumes transient resets cleanly once Retry-After cooldown expires",
+  );
+  h.controller.dispose();
+
+  // Isolated P19: late resolve from pre-replay request (even if abort listener bypassed) is discarded
+  const hLate = createHarness(makeTestEpisode(3));
+  hLate.controller.play();
+  await flushMicrotasks();
+  hLate.resolveSegment("seg_01");
+  await flushMicrotasks();
+  const preReplayReq = hLate.requests.find((r) => r.payload.segmentId === "seg_02");
+  const urlCountBefore = hLate.urlStats.createdCounts.size;
+  hLate.controller.replay();
+  preReplayReq.resolve({ ok: true, blob: new Blob(["stale-pre-replay"]), contentType: "audio/wav", durationMs: 2500 });
+  await flushMicrotasks();
+  check(
+    hLate.urlStats.createdCounts.size >= urlCountBefore &&
+      hLate.requests.filter((r) => r.payload.segmentId === "seg_02").length >= 2 &&
+      preReplayReq.aborted,
+    "P19. Pre-replay in-flight request is aborted on Replay and late payload does not hijack new cycle",
+  );
+  hLate.controller.dispose();
+}
+
+// P5, P6, P7, P22. Permanent failures (missing key, auth, invalid input, safety) stay permanent on Replay and continue captions
+{
+  const hCfg = createHarness(makeTestEpisode(3));
+  hCfg.controller.play();
+  await flushMicrotasks();
+  hCfg.resolveSegment("seg_01", { ok: false, httpStatus: 503, errorCode: "TTS_NOT_CONFIGURED", message: "Not configured", retryable: false });
+  await flushMicrotasks();
+  const cCfg = hCfg.requests.length;
+  hCfg.controller.replay();
+  await flushMicrotasks();
+  check(
+    hCfg.requests.length === cCfg &&
+      hCfg.controller.getSnapshot().segments[0].failureClass === "configuration" &&
+      hCfg.controller.getSnapshot().currentSegmentManualRetryAllowed === false,
+    "P5. Replay does not reset missing-key failure",
+  );
+  hCfg.controller.dispose();
+
+  const hAuth = createHarness(makeTestEpisode(3));
+  hAuth.controller.play();
+  await flushMicrotasks();
+  hAuth.resolveSegment("seg_01", { ok: false, httpStatus: 401, errorCode: "TTS_GENERATION_FAILED", message: "Credentials rejected", retryable: false });
+  await flushMicrotasks();
+  const cAuth = hAuth.requests.length;
+  hAuth.controller.replay();
+  await flushMicrotasks();
+  check(
+    hAuth.requests.length === cAuth && hAuth.controller.getSnapshot().segments[0].failureClass === "auth",
+    "P6. Replay does not reset authentication failure",
+  );
+  hAuth.controller.dispose();
+
+  const epPerm = makeTestEpisode(3);
+  epPerm.segments[0].text = "   "; // invalid input
+  const hPerm = createHarness(epPerm);
+  hPerm.controller.play();
+  await flushMicrotasks();
+  hPerm.resolveSegment("seg_02", { ok: false, httpStatus: 502, errorCode: "TTS_GENERATION_FAILED", message: "Blocked by safety policy", retryable: false });
+  hPerm.resolveSegment("seg_03");
+  await flushMicrotasks();
+  await hPerm.advance(9000); // finish turn 0 fallback -> turn 1 safety fallback
+  await hPerm.advance(9000); // finish turn 1 safety fallback -> turn 2 plays hosted audio
+  hPerm.getActiveCallbacks().onEnded(); // finish episode
+  await flushMicrotasks();
+
+  const reqsBeforePermReplay = hPerm.requests.length;
+  hPerm.controller.replay();
+  await flushMicrotasks();
+  const permSnap = hPerm.controller.getSnapshot();
+  check(
+    hPerm.requests.length === reqsBeforePermReplay &&
+      permSnap.segments[0].failureClass === "invalid" &&
+      permSnap.segments[1].failureClass === "safety" &&
+      permSnap.status === "playing" &&
+      permSnap.currentSegment?.text === "   ",
+    "P7,P22. Replay does not reset invalid-input or safety failures and continues cleanly with captions",
+  );
+  hPerm.controller.dispose();
+}
+
+// P12-P18, P24. Targeted Retry voice: isolates current turn, leaves cache intact, succeeds/clears, fails to timed fallback, disabled during cooldown, deduplicates clicks, bounds 1 per cycle
+{
+  const epRetry = makeTestEpisode(5);
+  epRetry.segments[1].text =
+    "This longer explanation compares studying for tomorrow's exam against commuting across town and picking up a part-time shift so the trade-offs stay clear.";
+  const h = createHarness(epRetry);
+  h.controller.play();
+  await flushMicrotasks();
+  h.resolveSegment("seg_01");
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "5" });
+  await flushMicrotasks();
+  h.resolveSegment("seg_03");
+  await h.advance(5100);
+  // Second 429 leaves seg_02 failed AND sets a fresh 3s Retry-After cooldown (shorter than seg_02's 8s timed fallback)
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 429, errorCode: "TTS_RATE_LIMITED", message: "Busy", retryable: true, retryAfterHeader: "3" });
+  await flushMicrotasks();
+
+  // Move to Turn 1 (seg_02): Retry button must be disabled while cooldown active with countdown text!
+  h.getActiveCallbacks().onEnded();
+  await flushMicrotasks();
+  const blockedRetrySnap = h.controller.getSnapshot();
+  const callsDuringCooldown = h.requests.length;
+  h.controller.retryCurrentSegment(); // ignored cleanly!
+  await flushMicrotasks();
+  check(
+    blockedRetrySnap.currentSegmentFailed === true &&
+      blockedRetrySnap.currentSegmentManualRetryAllowed === true &&
+      blockedRetrySnap.currentSegmentManualRetryDisabled === true &&
+      blockedRetrySnap.currentSegmentRetryDisabledReason === "cooldown" &&
+      blockedRetrySnap.currentSegmentRetryLabel.startsWith("Retry available in ") &&
+      h.requests.length === callsDuringCooldown,
+    "P16. Retry button is disabled with countdown label during Retry-After cooldown and ignores clicks",
+  );
+
+  // Wait for 3s cooldown to expire (still within seg_02's 8s fallback turn), then click Retry voice TWICE rapidly -> single targeted request only!
+  await h.advance(3100);
+  const callsBeforeManualRetry = h.requests.length;
+  h.controller.retryCurrentSegment();
+  h.controller.retryCurrentSegment(); // rapid duplicate click must NOT create second request!
+  await flushMicrotasks();
+  const duringRetryReqs = h.requests.slice(callsBeforeManualRetry);
+  const duringRetrySnap = h.controller.getSnapshot();
+  check(
+    duringRetryReqs.length === 1 &&
+      duringRetryReqs[0].payload.segmentId === "seg_02" &&
+      duringRetrySnap.status === "preparing" &&
+      duringRetrySnap.currentSegmentManualRetryDisabled === true &&
+      duringRetrySnap.readyCount === 2,
+    "P12,P13,P17. Targeted retry calls only seg_02, deduplicates rapid clicks, and preserves cached clips",
+  );
+
+  // Manual retry fails again -> returns cleanly to explicit fallback, bound exhausted (cannot retry again in same cycle!)
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Unavailable again", retryable: true });
+  await flushMicrotasks();
+  const afterManualFail = h.controller.getSnapshot();
+  const callsAfterFail = h.requests.length;
+  h.controller.retryCurrentSegment(); // blocked by 1-per-cycle manual bound!
+  await flushMicrotasks();
+  check(
+    afterManualFail.currentSegmentFailed === true &&
+      afterManualFail.notice?.includes("Voice unavailable again") &&
+      afterManualFail.currentSegmentManualRetryDisabled === true &&
+      afterManualFail.currentSegmentRetryDisabledReason === "limit_reached" &&
+      h.requests.length === callsAfterFail,
+    "P15,P18,P24. Failed targeted retry returns to explicit timed fallback and enforces 1 manual retry per cycle",
+  );
+
+  // Wait past cooldown after Replay begins a new cycle & resets manual retry allowance!
+  h.controller.replay();
+  await h.advance(2100);
+  await flushMicrotasks();
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Still busy", retryable: true });
+  await flushMicrotasks();
+  await h.advance(2100);
+  h.resolveSegment("seg_02", { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Still busy", retryable: true });
+  await flushMicrotasks();
+  h.getActiveCallbacks().onEnded(); // 0 -> 1 (seg_02 failed in new replay cycle)
+  await flushMicrotasks();
+  check(
+    h.controller.getSnapshot().currentSegmentManualRetryAllowed === true &&
+      h.controller.getSnapshot().currentSegmentManualRetryDisabled === false,
+    "P18b. Replay after cooldown resets manual retry allowance for new cycle",
+  );
+
+  // Manual retry now SUCCEEDS -> clears failure state and plays immediately!
+  h.controller.retryCurrentSegment();
+  await flushMicrotasks();
+  h.resolveSegment("seg_02");
+  await flushMicrotasks();
+  const recoveredManualSnap = h.controller.getSnapshot();
+  check(
+    recoveredManualSnap.currentSegmentFailed === false &&
+      recoveredManualSnap.currentSegmentHasAudio === true &&
+      recoveredManualSnap.status === "playing" &&
+      recoveredManualSnap.readyCount >= 3 &&
+      MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE === 1 &&
+      MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE === 3,
+    "P14,P24b. Successful targeted retry clears failure state cleanly and enforces explicit attempt constants",
+  );
+  h.controller.dispose();
+}
+
+// P25. Explicit check that no speechSynthesis exists anywhere in src/
+{
+  const hits = [];
+  function checkDir(d) {
+    for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, ent.name);
+      if (ent.isDirectory()) checkDir(p);
+      else if (fs.readFileSync(p, "utf8").toLowerCase().includes("speechsynthesis")) hits.push(p);
+    }
+  }
+  checkDir(path.join(root, "src"));
+  check(hits.length === 0, "P25. Confirmed zero speechSynthesis in patched production src/");
 }
 
 console.log(`ALL ${passed} AUDIO QUEUE TESTS PASSED.`);

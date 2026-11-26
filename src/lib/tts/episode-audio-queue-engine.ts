@@ -14,6 +14,11 @@ export const PREFETCH_LOOKAHEAD = 2;
 export const MAX_CAPACITY_RETRIES_PER_SEGMENT = 1;
 /** Client issues at most 1 initial request + 1 post-cooldown capacity retry per segment automatically. */
 export const MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT = 1 + MAX_CAPACITY_RETRIES_PER_SEGMENT;
+/** Bounded manual retries allowed per failed segment within a single playback/replay cycle. */
+export const MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE = 1;
+/** Combined automatic + manual client attempts allowed per segment within a single replay cycle. */
+export const MAX_TOTAL_CLIENT_ATTEMPTS_PER_SEGMENT_PER_CYCLE =
+  MAX_AUTOMATIC_CLIENT_ATTEMPTS_PER_SEGMENT + MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE;
 /** Theoretical upper bound on upstream Gemini calls per segment during automatic queue playback (capacity fail + 1 server regen retry). */
 export const MAX_AUTOMATIC_PROVIDER_CALLS_PER_SEGMENT = 3;
 export const OUTAGE_CONSECUTIVE_CAPACITY_FAILURES = 2;
@@ -54,6 +59,23 @@ export type EpisodePlaybackStatus =
 
 export type EpisodeAudioMode = "hosted" | "timed-fallback";
 export type QueueOutageState = "none" | "config_error" | "auth_error" | "provider_outage";
+export type SegmentFailureClass =
+  | "capacity"
+  | "timeout"
+  | "network"
+  | "audio"
+  | "configuration"
+  | "auth"
+  | "safety"
+  | "invalid"
+  | "unknown";
+
+export type RetryDisabledReason =
+  | "cooldown"
+  | "generating"
+  | "in_flight"
+  | "limit_reached"
+  | "permanent";
 
 export type FetchSegmentAudioResult =
   | {
@@ -69,6 +91,7 @@ export type FetchSegmentAudioResult =
       message: string;
       retryable: boolean;
       retryAfterHeader?: string | null;
+      isNetworkError?: boolean;
     };
 
 export interface FetchSegmentAudioPayload {
@@ -130,15 +153,20 @@ export interface SegmentQueueEntryView {
   durationMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;
+  failureClass: SegmentFailureClass | null;
   retryable: boolean;
   retryAfterMs: number | null;
   requestAttempts: number;
+  lastFailureAt: number | null;
+  manualRetriesUsedInCycle: number;
+  manualRetryAllowed: boolean;
   generationStartedAt: number | null;
   generationCompletedAt: number | null;
 }
 
 export interface EpisodeAudioQueueSnapshot {
   episodeId: string;
+  replayCycle: number;
   currentIndex: number;
   totalSegments: number;
   status: EpisodePlaybackStatus;
@@ -160,8 +188,14 @@ export interface EpisodeAudioQueueSnapshot {
   cooldownActive: boolean;
   cooldownRemainingMs: number;
   currentSegmentState: SegmentQueueStatus;
+  currentSegmentHasAudio: boolean;
   currentSegmentFailed: boolean;
   currentSegmentRetryable: boolean;
+  currentSegmentFailureClass: SegmentFailureClass | null;
+  currentSegmentManualRetryAllowed: boolean;
+  currentSegmentManualRetryDisabled: boolean;
+  currentSegmentRetryDisabledReason: RetryDisabledReason | null;
+  currentSegmentRetryLabel: string;
   notice: string | null;
   liveAnnouncement: string | null;
   segments: ReadonlyArray<SegmentQueueEntryView>;
@@ -188,6 +222,7 @@ export interface EpisodeAudioQueueController {
   skipCurrentSegment: () => void;
   continueWithTimedCaptions: () => void;
   retryHostedAudio: () => void;
+  refreshCooldownDisplay: () => void;
   dispose: () => void;
 }
 
@@ -200,9 +235,12 @@ interface InternalSegmentEntry {
   durationMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;
+  failureClass: SegmentFailureClass | null;
   retryable: boolean;
   retryAfterMs: number | null;
   capacityRetriesUsed: number;
+  manualRetriesUsedInCycle: number;
+  lastFailureAt: number | null;
   requestAttempts: number;
   generationStartedAt: number | null;
   generationCompletedAt: number | null;
@@ -255,9 +293,16 @@ export function buildIdleEpisodeSnapshot(episode: Episode): EpisodeAudioQueueSna
     inFlightCount: 0,
     cooldownActive: false,
     cooldownRemainingMs: 0,
+    replayCycle: 0,
     currentSegmentState: "idle",
+    currentSegmentHasAudio: false,
     currentSegmentFailed: false,
     currentSegmentRetryable: false,
+    currentSegmentFailureClass: null,
+    currentSegmentManualRetryAllowed: false,
+    currentSegmentManualRetryDisabled: false,
+    currentSegmentRetryDisabledReason: null,
+    currentSegmentRetryLabel: "Retry voice",
     notice: "Hosted Kuromate audio ready — press Play to hear all Kuromates speak in sequence.",
     liveAnnouncement: null,
     segments: orderedSegments.map((seg) => {
@@ -273,9 +318,13 @@ export function buildIdleEpisodeSnapshot(episode: Episode): EpisodeAudioQueueSna
         durationMs: null,
         errorCode: null,
         errorMessage: null,
+        failureClass: null,
         retryable: false,
         retryAfterMs: null,
         requestAttempts: 0,
+        lastFailureAt: null,
+        manualRetriesUsedInCycle: 0,
+        manualRetryAllowed: false,
         generationStartedAt: null,
         generationCompletedAt: null,
       };
@@ -287,6 +336,64 @@ export function buildIdleEpisodeSnapshot(episode: Episode): EpisodeAudioQueueSna
       rateLimitCount: 0,
       completedTurnsCount: 0,
     },
+  };
+}
+
+const RECOVERABLE_FAILURE_CLASSES = new Set<SegmentFailureClass>([
+  "capacity",
+  "timeout",
+  "network",
+  "audio",
+]);
+
+function isRecoverableFailureClass(failureClass: SegmentFailureClass | null): boolean {
+  return failureClass !== null && RECOVERABLE_FAILURE_CLASSES.has(failureClass);
+}
+
+function classifyFailureResult(
+  res: Extract<FetchSegmentAudioResult, { ok: false }>,
+): { failureClass: SegmentFailureClass; retryable: boolean } {
+  if (res.errorCode === "TTS_NOT_CONFIGURED") {
+    return { failureClass: "configuration", retryable: false };
+  }
+  const isAuthFailure =
+    res.errorCode === "TTS_GENERATION_FAILED" &&
+    !res.retryable &&
+    (res.httpStatus === 401 ||
+      res.httpStatus === 403 ||
+      /credential|key|auth/i.test(res.message));
+  if (isAuthFailure) {
+    return { failureClass: "auth", retryable: false };
+  }
+  if (res.errorCode === "INVALID_TTS_INPUT") {
+    return { failureClass: "invalid", retryable: false };
+  }
+  if (res.errorCode === "TTS_GENERATION_FAILED" && !res.retryable) {
+    return {
+      failureClass: /safety|prohibited|blocklist|content_policy|content safety/i.test(res.message)
+        ? "safety"
+        : "unknown",
+      retryable: false,
+    };
+  }
+  if (res.isNetworkError) {
+    return { failureClass: "network", retryable: true };
+  }
+  if (res.errorCode === "TTS_TIMEOUT") {
+    return { failureClass: "timeout", retryable: true };
+  }
+  if (res.errorCode === "TTS_RATE_LIMITED") {
+    return { failureClass: "capacity", retryable: true };
+  }
+  if (res.errorCode === "TTS_PROVIDER_UNAVAILABLE") {
+    return { failureClass: "capacity", retryable: res.retryable };
+  }
+  if (res.errorCode === "TTS_AUDIO_INVALID") {
+    return { failureClass: "audio", retryable: res.retryable };
+  }
+  return {
+    failureClass: res.retryable ? "capacity" : "unknown",
+    retryable: res.retryable,
   };
 }
 
@@ -334,9 +441,12 @@ export function createEpisodeAudioQueueEngine(
       durationMs: null,
       errorCode: null,
       errorMessage: null,
+      failureClass: null,
       retryable: false,
       retryAfterMs: null,
       capacityRetriesUsed: 0,
+      manualRetriesUsedInCycle: 0,
+      lastFailureAt: null,
       requestAttempts: 0,
       generationStartedAt: null,
       generationCompletedAt: null,
@@ -349,7 +459,11 @@ export function createEpisodeAudioQueueEngine(
   let disposed = false;
   let sessionToken = 1;
   let playbackToken = 1;
+  let replayCycle = 0;
+  let replayCycleToken = 1;
   let currentIndex = 0;
+  let targetedRetryActiveIndex: number | null = null;
+  let targetedRetryAutoPlay = false;
   let status: EpisodePlaybackStatus = "idle";
   let audioMode: EpisodeAudioMode = "hosted";
   let outageState: QueueOutageState = "none";
@@ -443,7 +557,12 @@ export function createEpisodeAudioQueueEngine(
       return "Timed captions mode — hosted audio paused due to service unavailability. Captions and visuals remain active.";
     }
     if (status === "preparing") {
-      return "Preparing Kuromate audio — captions advance automatically once audio plays.";
+      const hostName = entries[currentIndex]
+        ? hostsById.get(entries[currentIndex].segment.speakerId)?.name
+        : undefined;
+      return hostName
+        ? `Preparing ${hostName}’s voice — captions advance automatically once audio plays.`
+        : "Preparing Kuromate audio — captions advance automatically once audio plays.";
     }
     if (status === "autoplay-blocked") {
       return "Tap to continue audio — your browser paused automatic playback between turns.";
@@ -457,6 +576,95 @@ export function createEpisodeAudioQueueEngine(
     return "Hosted Kuromate audio ready — press Play to hear all Kuromates speak in sequence.";
   }
 
+  function isEntryManuallyRetryable(entry: InternalSegmentEntry | undefined): boolean {
+    if (!entry || entry.objectUrl !== null) {
+      return false;
+    }
+    if (outageState === "config_error" || outageState === "auth_error") {
+      return false;
+    }
+    if (entry.status !== "failed") {
+      return false;
+    }
+    if (!entry.retryable && entry.failureClass !== "audio") {
+      return false;
+    }
+    // Wait: respect explicit non-retryable failure (e.g. unexpected MIME or oversized) unless transient/decode error.
+    return (
+      entry.retryable &&
+      isRecoverableFailureClass(entry.failureClass) &&
+      entry.manualRetriesUsedInCycle < MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE
+    );
+  }
+
+  function evaluateCurrentRetryUi(
+    entry: InternalSegmentEntry | undefined,
+    idx: number,
+    cooldownActive: boolean,
+    cooldownRemainingMs: number,
+  ): {
+    allowed: boolean;
+    disabled: boolean;
+    disabledReason: RetryDisabledReason | null;
+    label: string;
+  } {
+    const hostName = entry ? (hostsById.get(entry.segment.speakerId)?.name ?? "Kuromate") : "Kuromate";
+    if (!entry || entry.objectUrl !== null) {
+      return { allowed: false, disabled: false, disabledReason: null, label: "Retry voice" };
+    }
+    if (inFlightControllers.has(idx) || entry.status === "generating" || targetedRetryActiveIndex === idx) {
+      return {
+        allowed: false,
+        disabled: true,
+        disabledReason: entry.status === "generating" ? "generating" : "in_flight",
+        label: `Preparing ${hostName}’s voice`,
+      };
+    }
+    if (outageState === "config_error" || outageState === "auth_error") {
+      return { allowed: false, disabled: true, disabledReason: "permanent", label: "Retry voice" };
+    }
+    if (entry.failureClass !== null && !isRecoverableFailureClass(entry.failureClass)) {
+      return { allowed: false, disabled: true, disabledReason: "permanent", label: "Retry voice" };
+    }
+    if (entry.status === "failed" && !entry.retryable) {
+      return { allowed: false, disabled: true, disabledReason: "permanent", label: "Retry voice" };
+    }
+    if (entry.manualRetriesUsedInCycle >= MAX_MANUAL_RETRIES_PER_SEGMENT_PER_CYCLE) {
+      return { allowed: false, disabled: true, disabledReason: "limit_reached", label: "Retry voice" };
+    }
+    const canAttemptManual =
+      entry.status === "failed" ||
+      entry.status === "retry-wait" ||
+      entry.status === "skipped" ||
+      entry.status === "cancelled";
+    if (!canAttemptManual) {
+      return { allowed: false, disabled: false, disabledReason: null, label: "Retry voice" };
+    }
+    if (cooldownActive) {
+      const secs = Math.max(1, Math.ceil(cooldownRemainingMs / 1000));
+      return {
+        allowed: true,
+        disabled: true,
+        disabledReason: "cooldown",
+        label: `Retry available in ${secs}s`,
+      };
+    }
+    if (inFlightControllers.size >= MAX_TTS_CONCURRENCY) {
+      return {
+        allowed: true,
+        disabled: true,
+        disabledReason: "in_flight",
+        label: "Retry voice",
+      };
+    }
+    return {
+      allowed: true,
+      disabled: false,
+      disabledReason: null,
+      label: "Retry voice",
+    };
+  }
+
   function buildSnapshot(): EpisodeAudioQueueSnapshot {
     const totalSegments = entries.length;
     const currentEntry = entries[currentIndex];
@@ -468,9 +676,12 @@ export function createEpisodeAudioQueueEngine(
     const readyCount = entries.filter((e) => e.objectUrl !== null).length;
     const failedCount = entries.filter((e) => e.status === "failed").length;
     const cooldownActive = cooldownTimer !== null && cooldownUntilMs > now();
+    const cooldownRemainingMs = cooldownActive ? Math.max(0, cooldownUntilMs - now()) : 0;
+    const retryUi = evaluateCurrentRetryUi(currentEntry, currentIndex, cooldownActive, cooldownRemainingMs);
 
     return {
       episodeId: episode.id,
+      replayCycle,
       currentIndex,
       totalSegments,
       status,
@@ -490,10 +701,16 @@ export function createEpisodeAudioQueueEngine(
       failedCount,
       inFlightCount: inFlightControllers.size,
       cooldownActive,
-      cooldownRemainingMs: cooldownActive ? Math.max(0, cooldownUntilMs - now()) : 0,
+      cooldownRemainingMs,
       currentSegmentState: currentEntry?.status ?? "idle",
+      currentSegmentHasAudio: currentEntry?.objectUrl !== null && currentEntry?.objectUrl !== undefined,
       currentSegmentFailed: currentEntry?.status === "failed",
       currentSegmentRetryable: currentEntry?.retryable ?? false,
+      currentSegmentFailureClass: currentEntry?.failureClass ?? null,
+      currentSegmentManualRetryAllowed: retryUi.allowed,
+      currentSegmentManualRetryDisabled: retryUi.disabled,
+      currentSegmentRetryDisabledReason: retryUi.disabledReason,
+      currentSegmentRetryLabel: retryUi.label,
       notice: computeNotice(),
       liveAnnouncement,
       segments: entries.map((entry) => ({
@@ -506,9 +723,13 @@ export function createEpisodeAudioQueueEngine(
         durationMs: entry.durationMs,
         errorCode: entry.errorCode,
         errorMessage: entry.errorMessage,
+        failureClass: entry.failureClass,
         retryable: entry.retryable,
         retryAfterMs: entry.retryAfterMs,
         requestAttempts: entry.requestAttempts,
+        lastFailureAt: entry.lastFailureAt,
+        manualRetriesUsedInCycle: entry.manualRetriesUsedInCycle,
+        manualRetryAllowed: isEntryManuallyRetryable(entry),
         generationStartedAt: entry.generationStartedAt,
         generationCompletedAt: entry.generationCompletedAt,
       })),
@@ -713,7 +934,13 @@ export function createEpisodeAudioQueueEngine(
     entry.status = "failed";
     entry.errorCode = "TTS_AUDIO_INVALID";
     entry.errorMessage = "Could not decode hosted Kuromate audio in this browser.";
+    entry.failureClass = "audio";
     entry.retryable = true;
+    entry.lastFailureAt = now();
+    if (targetedRetryActiveIndex === index) {
+      targetedRetryActiveIndex = null;
+      targetedRetryAutoPlay = false;
+    }
 
     if (audioMode === "hosted") {
       startTimedFallbackTurn(index, "Voice unavailable for this turn. Continuing with captions.");
@@ -741,6 +968,15 @@ export function createEpisodeAudioQueueEngine(
       return;
     }
 
+    // Revisit of skipped or aborted turn resets safely unless permanently failed.
+    if (entry.status === "skipped" || entry.status === "cancelled") {
+      entry.status = "idle";
+      entry.errorCode = null;
+      entry.errorMessage = null;
+      entry.failureClass = null;
+      entry.retryAfterMs = null;
+    }
+
     if (entry.status === "failed") {
       if (outageState !== "none") {
         stopActivePlaybackOnly();
@@ -765,11 +1001,14 @@ export function createEpisodeAudioQueueEngine(
     if (entry.status === "idle") {
       entry.status = "queued";
     }
+    const hostName = hostsById.get(entry.segment.speakerId)?.name;
     notice =
       cooldownTimer !== null
         ? "Voice generation is briefly paused — retrying when the provider allows."
-        : "Preparing Kuromate audio for the current turn…";
-    setAnnouncement("Preparing Kuromate audio.");
+        : hostName
+          ? `Preparing ${hostName}’s voice…`
+          : "Preparing Kuromate audio for the current turn…";
+    setAnnouncement(hostName ? `Preparing ${hostName}’s voice.` : "Preparing Kuromate audio.");
     emit();
     pumpQueue();
   }
@@ -798,7 +1037,7 @@ export function createEpisodeAudioQueueEngine(
         }
       }
 
-      if (status === "preparing" || status === "playing") {
+      if (outageState === "none" && (status === "preparing" || status === "playing")) {
         notice = null;
         emit();
         pumpQueue();
@@ -816,11 +1055,9 @@ export function createEpisodeAudioQueueEngine(
   }
 
   function pickNextCandidateIndex(): number | null {
-    // Pause speculative background prefetch while recovering from an exhausted capacity failure.
-    const windowEnd =
-      consecutiveCapacityFailures > 0
-        ? currentIndex
-        : Math.min(entries.length - 1, currentIndex + PREFETCH_LOOKAHEAD);
+    // Narrow lookahead after an exhausted capacity failure without blocking the immediate next turn.
+    const lookahead = consecutiveCapacityFailures > 0 ? 1 : PREFETCH_LOOKAHEAD;
+    const windowEnd = Math.min(entries.length - 1, currentIndex + lookahead);
     for (let idx = currentIndex; idx <= windowEnd; idx += 1) {
       const entry = entries[idx];
       if (!entry || inFlightControllers.has(idx)) continue;
@@ -845,7 +1082,9 @@ export function createEpisodeAudioQueueEngine(
 
   function handleOutageTriggered(kind: Exclude<QueueOutageState, "none">, message: string) {
     outageState = kind;
-    clearCooldownTimer();
+    if (kind !== "provider_outage") {
+      clearCooldownTimer();
+    }
     for (const item of entries) {
       if (item.status === "retry-wait" || item.status === "queued") {
         item.status = "idle";
@@ -876,6 +1115,13 @@ export function createEpisodeAudioQueueEngine(
     const entry = entries[index];
     if (!entry) return;
 
+    const wasTargetedRetry = targetedRetryActiveIndex === index;
+    const shouldAutoPlayTargeted = wasTargetedRetry && targetedRetryAutoPlay;
+    if (wasTargetedRetry) {
+      targetedRetryActiveIndex = null;
+      targetedRetryAutoPlay = false;
+    }
+
     consecutiveCapacityFailures = 0;
     const url = urlPool.set(entry.cacheKey, blob);
     entry.objectUrl = url;
@@ -883,11 +1129,22 @@ export function createEpisodeAudioQueueEngine(
     entry.status = "ready";
     entry.errorCode = null;
     entry.errorMessage = null;
+    entry.failureClass = null;
     entry.retryable = false;
     entry.retryAfterMs = null;
     entry.generationCompletedAt = now();
 
-    if (index === currentIndex && status === "preparing") {
+    if (wasTargetedRetry && !shouldAutoPlayTargeted) {
+      if (index === currentIndex) {
+        notice = null;
+      }
+      emit();
+      pumpQueue();
+      return;
+    }
+
+    if (index === currentIndex && (status === "preparing" || shouldAutoPlayTargeted)) {
+      pausedTimeSec = 0;
       playCachedEntry(currentIndex, pausedTimeSec);
       pumpQueue();
       return;
@@ -904,42 +1161,52 @@ export function createEpisodeAudioQueueEngine(
     const entry = entries[index];
     if (!entry) return;
     entry.generationCompletedAt = now();
+    entry.lastFailureAt = now();
 
-    if (res.errorCode === "TTS_NOT_CONFIGURED") {
+    const wasTargetedRetry = targetedRetryActiveIndex === index;
+    const wasTargetedPaused = wasTargetedRetry && !targetedRetryAutoPlay;
+    if (wasTargetedRetry) {
+      targetedRetryActiveIndex = null;
+      targetedRetryAutoPlay = false;
+    }
+
+    const classified = classifyFailureResult(res);
+
+    if (classified.failureClass === "configuration") {
       entry.status = "failed";
       entry.errorCode = res.errorCode;
       entry.errorMessage = res.message;
+      entry.failureClass = "configuration";
       entry.retryable = false;
       handleOutageTriggered("config_error", res.message);
       return;
     }
 
-    const isAuthFailure =
-      res.errorCode === "TTS_GENERATION_FAILED" &&
-      !res.retryable &&
-      (res.httpStatus === 401 ||
-        res.httpStatus === 403 ||
-        /credential|key|auth/i.test(res.message));
-
-    if (isAuthFailure) {
+    if (classified.failureClass === "auth") {
       entry.status = "failed";
       entry.errorCode = res.errorCode;
       entry.errorMessage = res.message;
+      entry.failureClass = "auth";
       entry.retryable = false;
       handleOutageTriggered("auth_error", res.message);
       return;
     }
 
     const isCapacityError =
-      res.errorCode === "TTS_RATE_LIMITED" ||
-      res.errorCode === "TTS_PROVIDER_UNAVAILABLE" ||
-      res.errorCode === "TTS_TIMEOUT";
+      classified.failureClass === "capacity" ||
+      classified.failureClass === "timeout" ||
+      classified.failureClass === "network";
 
     if (res.errorCode === "TTS_RATE_LIMITED") {
       rateLimitCount += 1;
     }
 
-    if (isCapacityError && entry.capacityRetriesUsed < MAX_CAPACITY_RETRIES_PER_SEGMENT && outageState === "none") {
+    if (
+      isCapacityError &&
+      classified.retryable &&
+      entry.capacityRetriesUsed < MAX_CAPACITY_RETRIES_PER_SEGMENT &&
+      outageState === "none"
+    ) {
       const waitMs =
         res.errorCode === "TTS_RATE_LIMITED"
           ? parseRetryAfterMs(res.retryAfterHeader, now())
@@ -948,6 +1215,7 @@ export function createEpisodeAudioQueueEngine(
       entry.status = "retry-wait";
       entry.errorCode = res.errorCode;
       entry.errorMessage = res.message;
+      entry.failureClass = classified.failureClass;
       entry.retryable = true;
       entry.retryAfterMs = waitMs;
       if (index === currentIndex && status === "preparing") {
@@ -959,13 +1227,22 @@ export function createEpisodeAudioQueueEngine(
       return;
     }
 
+    if (res.errorCode === "TTS_RATE_LIMITED") {
+      // Honor rate-limit Retry-After cooldown across the queue even if automatic retries for this clip are exhausted.
+      const cooldownMs = parseRetryAfterMs(res.retryAfterHeader, now());
+      entry.retryAfterMs = cooldownMs;
+      scheduleSharedCooldown(cooldownMs);
+    } else {
+      entry.retryAfterMs = null;
+    }
+
     entry.status = "failed";
     entry.errorCode = res.errorCode;
     entry.errorMessage = res.message;
-    entry.retryable = res.retryable;
-    entry.retryAfterMs = null;
+    entry.failureClass = classified.failureClass;
+    entry.retryable = classified.retryable;
 
-    if (isCapacityError) {
+    if (isCapacityError && !wasTargetedRetry) {
       consecutiveCapacityFailures += 1;
       if (consecutiveCapacityFailures >= OUTAGE_CONSECUTIVE_CAPACITY_FAILURES) {
         handleOutageTriggered(
@@ -974,12 +1251,24 @@ export function createEpisodeAudioQueueEngine(
         );
         return;
       }
-    } else {
+    } else if (!isCapacityError) {
       consecutiveCapacityFailures = 0;
     }
 
+    const fallbackNotice = wasTargetedRetry
+      ? "Voice unavailable again — continuing with captions."
+      : "Voice unavailable for this turn. Continuing with captions.";
+
+    if (wasTargetedPaused) {
+      if (index === currentIndex) {
+        notice = fallbackNotice;
+      }
+      emit();
+      return;
+    }
+
     if (index === currentIndex && status === "preparing") {
-      startTimedFallbackTurn(index, "Voice unavailable for this turn. Continuing with captions.");
+      startTimedFallbackTurn(index, fallbackNotice);
     } else {
       emit();
     }
@@ -997,7 +1286,13 @@ export function createEpisodeAudioQueueEngine(
       entry.status = "failed";
       entry.errorCode = "INVALID_TTS_INPUT";
       entry.errorMessage = "Dialogue turn is invalid for hosted voice playback.";
+      entry.failureClass = "invalid";
       entry.retryable = false;
+      entry.lastFailureAt = now();
+      if (targetedRetryActiveIndex === index) {
+        targetedRetryActiveIndex = null;
+        targetedRetryAutoPlay = false;
+      }
       if (index === currentIndex && status === "preparing") {
         startTimedFallbackTurn(index, "Voice unavailable for this turn. Continuing with captions.");
       } else {
@@ -1009,6 +1304,7 @@ export function createEpisodeAudioQueueEngine(
 
     const controller = new AbortController();
     const localSession = sessionToken;
+    const localReplayCycle = replayCycleToken;
     inFlightControllers.set(index, controller);
     if (inFlightControllers.size > maxObservedConcurrency) {
       maxObservedConcurrency = inFlightControllers.size;
@@ -1034,7 +1330,12 @@ export function createEpisodeAudioQueueEngine(
         controller.signal,
       )
       .then((result) => {
-        if (disposed || localSession !== sessionToken || controller.signal.aborted) {
+        if (
+          disposed ||
+          localSession !== sessionToken ||
+          localReplayCycle !== replayCycleToken ||
+          controller.signal.aborted
+        ) {
           return;
         }
         inFlightControllers.delete(index);
@@ -1045,7 +1346,12 @@ export function createEpisodeAudioQueueEngine(
         }
       })
       .catch(() => {
-        if (disposed || localSession !== sessionToken || controller.signal.aborted) {
+        if (
+          disposed ||
+          localSession !== sessionToken ||
+          localReplayCycle !== replayCycleToken ||
+          controller.signal.aborted
+        ) {
           return;
         }
         inFlightControllers.delete(index);
@@ -1055,12 +1361,13 @@ export function createEpisodeAudioQueueEngine(
           errorCode: "TTS_PROVIDER_UNAVAILABLE",
           message: "Unable to reach hosted Kuromate audio right now.",
           retryable: true,
+          isNetworkError: true,
         });
       });
   }
 
   function pumpQueue() {
-    if (!shouldContinueBackgroundQueue() || cooldownTimer !== null) {
+    if (!shouldContinueBackgroundQueue() || cooldownTimer !== null || targetedRetryActiveIndex !== null) {
       return;
     }
     while (inFlightControllers.size < MAX_TTS_CONCURRENCY) {
@@ -1076,11 +1383,7 @@ export function createEpisodeAudioQueueEngine(
     if (disposed || entries.length === 0) return;
 
     if (status === "complete") {
-      currentIndex = 0;
-      pausedTimeSec = 0;
-      loadedSegmentIndex = null;
-      notice = null;
-      activateCurrentSegmentForPlayback();
+      replay();
       return;
     }
 
@@ -1184,6 +1487,8 @@ export function createEpisodeAudioQueueEngine(
     const bounded = Math.max(0, Math.min(entries.length - 1, targetIndex));
     const wasActive = status === "playing" || status === "preparing" || status === "autoplay-blocked";
 
+    targetedRetryActiveIndex = null;
+    targetedRetryAutoPlay = false;
     stopActivePlaybackOnly();
     markActiveClipsIdleAfterPause();
     currentIndex = bounded;
@@ -1209,6 +1514,8 @@ export function createEpisodeAudioQueueEngine(
 
   function restart() {
     if (disposed) return;
+    targetedRetryActiveIndex = null;
+    targetedRetryAutoPlay = false;
     stopActivePlaybackOnly();
     markActiveClipsIdleAfterPause();
     currentIndex = 0;
@@ -1220,8 +1527,62 @@ export function createEpisodeAudioQueueEngine(
 
   function replay() {
     if (disposed || entries.length === 0) return;
+    targetedRetryActiveIndex = null;
+    targetedRetryAutoPlay = false;
     stopActivePlaybackOnly();
-    markActiveClipsIdleAfterPause();
+    replayCycle += 1;
+    replayCycleToken += 1;
+    abortBackgroundRequests();
+
+    const isPermanentEpisodeOutage =
+      outageState === "config_error" || outageState === "auth_error";
+    const cooldownElapsed = cooldownTimer === null || cooldownUntilMs <= now();
+
+    if (!isPermanentEpisodeOutage) {
+      if (outageState === "provider_outage") {
+        outageState = "none";
+      }
+      consecutiveCapacityFailures = 0;
+      audioMode = "hosted";
+    }
+
+    for (const entry of entries) {
+      if (cooldownElapsed) {
+        entry.manualRetriesUsedInCycle = 0;
+      }
+      if (entry.objectUrl !== null) {
+        entry.status = "ready";
+        entry.errorCode = null;
+        entry.errorMessage = null;
+        entry.failureClass = null;
+        entry.retryable = false;
+        entry.retryAfterMs = null;
+        continue;
+      }
+
+      const permanent =
+        isPermanentEpisodeOutage ||
+        (entry.failureClass !== null && !isRecoverableFailureClass(entry.failureClass)) ||
+        (entry.status === "failed" && !entry.retryable);
+
+      if (permanent) {
+        if (entry.status !== "failed") {
+          entry.status = "failed";
+        }
+        entry.retryable = false;
+        continue;
+      }
+
+      // Reset eligible transient/aborted/skipped failures for progressive bounded replay recovery.
+      entry.status = "idle";
+      entry.capacityRetriesUsed = 0;
+      entry.errorCode = null;
+      entry.errorMessage = null;
+      entry.failureClass = null;
+      entry.retryable = false;
+      entry.retryAfterMs = null;
+    }
+
     currentIndex = 0;
     pausedTimeSec = 0;
     notice = null;
@@ -1230,21 +1591,47 @@ export function createEpisodeAudioQueueEngine(
 
   function retryCurrentSegment() {
     if (disposed) return;
-    const entry = entries[currentIndex];
+    const targetIdx = currentIndex;
+    const entry = entries[targetIdx];
     if (!entry) return;
-    outageState = "none";
-    audioMode = "hosted";
+
+    const cooldownActive = cooldownTimer !== null && cooldownUntilMs > now();
+    if (
+      !isEntryManuallyRetryable(entry) ||
+      cooldownActive ||
+      inFlightControllers.has(targetIdx) ||
+      entry.status === "generating" ||
+      targetedRetryActiveIndex !== null ||
+      inFlightControllers.size >= MAX_TTS_CONCURRENCY
+    ) {
+      return;
+    }
+
+    const shouldAutoPlayAfterRetry = status === "playing" || status === "preparing";
+    stopActivePlaybackOnly();
     consecutiveCapacityFailures = 0;
-    clearCooldownTimer();
-    entry.capacityRetriesUsed = 0;
+    if (outageState === "provider_outage") {
+      outageState = "none";
+      audioMode = "hosted";
+    }
+
+    entry.manualRetriesUsedInCycle += 1;
+    entry.capacityRetriesUsed = MAX_CAPACITY_RETRIES_PER_SEGMENT;
     entry.errorCode = null;
     entry.errorMessage = null;
+    entry.failureClass = null;
     entry.retryAfterMs = null;
-    if (!entry.objectUrl) {
-      entry.status = "queued";
-    }
-    notice = null;
-    activateCurrentSegmentForPlayback();
+    entry.status = "queued";
+
+    targetedRetryActiveIndex = targetIdx;
+    targetedRetryAutoPlay = shouldAutoPlayAfterRetry;
+    status = shouldAutoPlayAfterRetry ? "preparing" : "paused";
+
+    const hostName = hostsById.get(entry.segment.speakerId)?.name ?? "Kuromate";
+    notice = `Preparing ${hostName}’s voice…`;
+    setAnnouncement(`Preparing ${hostName}’s voice.`);
+    emit();
+    startGenerationForIndex(targetIdx);
   }
 
   function skipCurrentSegment() {
@@ -1262,6 +1649,8 @@ export function createEpisodeAudioQueueEngine(
 
   function continueWithTimedCaptions() {
     if (disposed) return;
+    targetedRetryActiveIndex = null;
+    targetedRetryAutoPlay = false;
     clearCooldownTimer();
     abortBackgroundRequests();
     audioMode = "timed-fallback";
@@ -1271,16 +1660,31 @@ export function createEpisodeAudioQueueEngine(
 
   function retryHostedAudio() {
     if (disposed) return;
+    if (outageState === "config_error" || outageState === "auth_error") {
+      return;
+    }
+    if (cooldownTimer !== null && cooldownUntilMs > now()) {
+      return;
+    }
+    targetedRetryActiveIndex = null;
+    targetedRetryAutoPlay = false;
     outageState = "none";
     audioMode = "hosted";
     consecutiveCapacityFailures = 0;
-    clearCooldownTimer();
     for (const item of entries) {
+      if (item.objectUrl !== null) continue;
+      if (item.failureClass !== null && !isRecoverableFailureClass(item.failureClass)) {
+        continue;
+      }
+      if (item.status === "failed" && !item.retryable) {
+        continue;
+      }
       if (item.status === "failed" || item.status === "cancelled" || item.status === "retry-wait") {
-        item.status = item.objectUrl ? "ready" : "idle";
+        item.status = "idle";
         item.capacityRetriesUsed = 0;
         item.errorCode = null;
         item.errorMessage = null;
+        item.failureClass = null;
         item.retryAfterMs = null;
       }
     }
@@ -1288,11 +1692,19 @@ export function createEpisodeAudioQueueEngine(
     activateCurrentSegmentForPlayback();
   }
 
+  function refreshCooldownDisplay() {
+    if (disposed || cooldownTimer === null) return;
+    emit();
+  }
+
   function dispose() {
     if (disposed) return;
     disposed = true;
+    targetedRetryActiveIndex = null;
+    targetedRetryAutoPlay = false;
     sessionToken += 1;
     playbackToken += 1;
+    replayCycleToken += 1;
     clearFallbackTimer();
     clearReactionTimers();
     clearCooldownTimer();
@@ -1330,6 +1742,7 @@ export function createEpisodeAudioQueueEngine(
     skipCurrentSegment,
     continueWithTimedCaptions,
     retryHostedAudio,
+    refreshCooldownDisplay,
     dispose,
   };
 }

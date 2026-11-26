@@ -123,6 +123,7 @@ async function fetchBrowserSegmentAudio(
       errorCode: "TTS_PROVIDER_UNAVAILABLE",
       message: "Unable to reach hosted Kuromate voice service. Captions remain active.",
       retryable: true,
+      isNetworkError: true,
     };
   }
 }
@@ -366,6 +367,18 @@ export function useEpisodeAudioQueue(episode: Episode): EpisodeAudioQueueHookRes
 
   const snapshot =
     state.episode === episode ? state.snapshot : buildIdleEpisodeSnapshot(episode);
+
+  useEffect(() => {
+    if (!snapshot.cooldownActive) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      engineRef.current?.refreshCooldownDisplay();
+    }, 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [snapshot.cooldownActive]);
 
   const play = useCallback(() => {
     engineRef.current?.play();

@@ -14,6 +14,7 @@ function resolveStatusPill(snapshot: EpisodeAudioQueueSnapshot): {
   label: string;
   toneClass: string;
 } {
+  const hostName = snapshot.activeHost?.name ?? "Kuromate";
   if (snapshot.audioMode === "timed-fallback") {
     return {
       label: "Timed captions mode",
@@ -38,16 +39,16 @@ function resolveStatusPill(snapshot: EpisodeAudioQueueSnapshot): {
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
     };
   }
+  if (snapshot.status === "preparing") {
+    return {
+      label: `Preparing ${hostName}’s voice`,
+      toneClass: "border-blue-300 bg-blue-50 text-blue-950",
+    };
+  }
   if (snapshot.currentSegmentFailed) {
     return {
       label: "Voice unavailable for this turn",
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.status === "preparing") {
-    return {
-      label: "Preparing Kuromate audio",
-      toneClass: "border-blue-300 bg-blue-50 text-blue-950",
     };
   }
   if (snapshot.status === "playing") {
@@ -89,7 +90,19 @@ export function AudioStatusBar({
   const hostRole = snapshot.activeHost?.role ?? "explainer";
   const hasOutage = snapshot.outageState !== "none";
   const showSingleFailureActions =
-    !hasOutage && snapshot.audioMode === "hosted" && snapshot.currentSegmentFailed;
+    !hasOutage &&
+    snapshot.audioMode === "hosted" &&
+    (snapshot.currentSegmentFailed ||
+      snapshot.currentSegmentRetryDisabledReason === "generating" ||
+      snapshot.currentSegmentRetryDisabledReason === "in_flight");
+
+  const showRetryButton =
+    showSingleFailureActions &&
+    snapshot.currentSegmentRetryDisabledReason !== "permanent" &&
+    (snapshot.currentSegmentManualRetryAllowed ||
+      snapshot.currentSegmentRetryDisabledReason === "generating" ||
+      snapshot.currentSegmentRetryDisabledReason === "in_flight" ||
+      snapshot.currentSegmentRetryDisabledReason === "limit_reached");
 
   return (
     <section
@@ -127,13 +140,16 @@ export function AudioStatusBar({
 
           {showSingleFailureActions ? (
             <>
-              <button
-                type="button"
-                onClick={onRetryCurrentSegment}
-                className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 sm:text-sm"
-              >
-                Retry voice
-              </button>
+              {showRetryButton ? (
+                <button
+                  type="button"
+                  disabled={snapshot.currentSegmentManualRetryDisabled}
+                  onClick={onRetryCurrentSegment}
+                  className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:text-white sm:text-sm"
+                >
+                  {snapshot.currentSegmentRetryLabel}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={onSkipCurrentSegment}
@@ -155,10 +171,13 @@ export function AudioStatusBar({
               </button>
               <button
                 type="button"
+                disabled={snapshot.cooldownActive}
                 onClick={onRetryHostedAudio}
-                className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 sm:text-sm"
+                className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 sm:text-sm"
               >
-                Retry hosted audio
+                {snapshot.cooldownActive
+                  ? `Retry available in ${Math.max(1, Math.ceil(snapshot.cooldownRemainingMs / 1000))}s`
+                  : "Retry hosted audio"}
               </button>
               <button
                 type="button"
@@ -173,10 +192,13 @@ export function AudioStatusBar({
           {snapshot.audioMode === "timed-fallback" ? (
             <button
               type="button"
+              disabled={snapshot.cooldownActive}
               onClick={onRetryHostedAudio}
-              className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 sm:text-sm"
+              className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 sm:text-sm"
             >
-              Retry hosted audio
+              {snapshot.cooldownActive
+                ? `Retry available in ${Math.max(1, Math.ceil(snapshot.cooldownRemainingMs / 1000))}s`
+                : "Retry hosted audio"}
             </button>
           ) : null}
         </div>

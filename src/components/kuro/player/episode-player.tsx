@@ -117,7 +117,11 @@ export function EpisodePlayer({
         previousHost={snapshot.previousHost}
         status={snapshot.stageStatus}
         audioAvailability={audioAvailability}
-        segmentAudioFailed={snapshot.currentSegmentFailed}
+        segmentHasAudio={snapshot.currentSegmentHasAudio}
+        segmentAudioFailed={
+          snapshot.currentSegmentFailed ||
+          (snapshot.audioMode === "timed-fallback" && !snapshot.currentSegmentHasAudio)
+        }
         onReplay={queue.replay}
       />
 
