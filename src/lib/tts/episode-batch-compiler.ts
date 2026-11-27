@@ -115,7 +115,6 @@ export type FetchCompiledSegmentResult =
       retryAfterHeader?: string | null;
       profileId?: string | null;
       voiceIdentityId?: string | null;
-      resolvedVoice?: string | null;
       requestId?: string | null;
     }
   | {

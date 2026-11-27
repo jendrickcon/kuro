@@ -208,8 +208,10 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
       primaryBytes.readUInt16LE(22) === 1 &&
       primaryBytes.readUInt16LE(34) === 16 &&
       primaryResponse.headers.get("x-kuro-audio-duration-ms") === "1000" &&
-      primaryResponse.headers.get("x-kuro-tts-fallback-used") === "false",
-    "Deepgram primary returns a valid 24 kHz mono PCM WAV with measured duration",
+      primaryResponse.headers.get("x-kuro-tts-fallback-used") === "false" &&
+      primaryResponse.headers.get("x-kuro-tts-provider") === null &&
+      primaryResponse.headers.get("x-kuro-tts-voice") === null,
+    "Deepgram primary returns a valid 24 kHz mono PCM WAV with measured duration and stripped vendor headers",
   );
 
   for (const status of [429, 503]) {
@@ -234,10 +236,12 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
         geminiCalls === 1 &&
         switched.headers.get("x-kuro-tts-retry-used") === "true" &&
         switched.headers.get("x-kuro-tts-fallback-used") === "true" &&
-        switched.headers.get("x-kuro-tts-provider") === "gemini" &&
+        switched.headers.get("x-kuro-tts-provider") === null &&
+        switched.headers.get("x-kuro-tts-voice") === null &&
+        Boolean(switched.headers.get("x-kuro-tts-identity")) &&
         switched.headers.get("x-kuro-provider-attempts") === "3" &&
         Boolean(switched.headers.get("x-kuro-request-id")),
-      `Deepgram ${status} tries once more on Deepgram then switches once to Gemini (max 3 total)`,
+      `Deepgram ${status} tries once more on Deepgram then switches once to Gemini without exposing vendor headers (max 3 total)`,
     );
   }
 
@@ -262,9 +266,11 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
         dgTransientThenOk === 2 &&
         retryThenSuccess.headers.get("x-kuro-tts-retry-used") === "true" &&
         retryThenSuccess.headers.get("x-kuro-tts-fallback-used") === "false" &&
-        retryThenSuccess.headers.get("x-kuro-tts-provider") === "deepgram" &&
+        retryThenSuccess.headers.get("x-kuro-tts-provider") === null &&
+        retryThenSuccess.headers.get("x-kuro-tts-voice") === null &&
+        Boolean(retryThenSuccess.headers.get("x-kuro-tts-identity")) &&
         retryThenSuccess.headers.get("x-kuro-provider-attempts") === "2",
-      "[WP-012 Server 01] Deepgram transient 503 retries once and succeeds without Gemini fallback",
+      "[WP-012 Server 01] Deepgram transient 503 retries once and succeeds without Gemini fallback or vendor headers",
     );
 
     // Twice empty WAV retries once on Deepgram and fails without calling Gemini fallback
@@ -283,8 +289,12 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
       },
     });
     check(
-      twiceEmpty.status === 502 && emptyCalls === 2 && emptyGeminiCalls === 0,
-      "[WP-012 Server 02] Truncated Deepgram WAV retries once without falsely switching to Gemini",
+      twiceEmpty.status === 502 &&
+        emptyCalls === 2 &&
+        emptyGeminiCalls === 0 &&
+        twiceEmpty.headers.get("x-kuro-tts-provider") === null &&
+        twiceEmpty.headers.get("x-kuro-tts-voice") === null,
+      "[WP-012 Server 02] Truncated Deepgram WAV retries once without falsely switching to Gemini or exposing vendor headers",
     );
 
     // Hard-stops: 403, 400, 429 long_quota_wait, oversized audio -> 0 retry, 0 fallback
@@ -309,8 +319,12 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
         },
       });
       check(
-        rHard.status === badCase.expectStatus && cDg === 1 && cGem === 0,
-        `[WP-012 Server 03] Hard-stop ${badCase.label} makes 1 attempt, 0 retries, and 0 fallback calls`,
+        rHard.status === badCase.expectStatus &&
+          cDg === 1 &&
+          cGem === 0 &&
+          rHard.headers.get("x-kuro-tts-provider") === null &&
+          rHard.headers.get("x-kuro-tts-voice") === null,
+        `[WP-012 Server 03] Hard-stop ${badCase.label} makes 1 attempt, 0 retries, and 0 fallback calls without vendor headers`,
       );
     }
 
@@ -357,19 +371,37 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
     deepgramTransport: async () => { throw { status: 401 }; },
     transport: async () => { authFallbackCalls += 1; return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" }; },
   });
-  check(auth.status === 502 && authFallbackCalls === 0, "Deepgram auth errors never switch providers");
+  check(
+    auth.status === 502 &&
+      authFallbackCalls === 0 &&
+      auth.headers.get("x-kuro-tts-provider") === null &&
+      auth.headers.get("x-kuro-tts-voice") === null,
+    "Deepgram auth errors never switch providers or expose vendor headers",
+  );
 
   const missingKey = await handleTtsPost(makeJsonRequest(req), {
     env: { KURO_TTS_PROVIDER: "deepgram", GEMINI_API_KEY: "test-gemini-key" },
     deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" }),
   });
-  check(missingKey.status === 503 && (await missingKey.json()).error.code === "TTS_NOT_CONFIGURED", "Deepgram selection requires its server key");
+  check(
+    missingKey.status === 503 &&
+      (await missingKey.json()).error.code === "TTS_NOT_CONFIGURED" &&
+      missingKey.headers.get("x-kuro-tts-provider") === null &&
+      missingKey.headers.get("x-kuro-tts-voice") === null,
+    "Deepgram selection requires its server key without exposing vendor headers",
+  );
 
   const invalidProvider = await handleTtsPost(makeJsonRequest(req), {
     env: { KURO_TTS_PROVIDER: "unknown", DEEPGRAM_API_KEY: "test-key" },
     deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" }),
   });
-  check(invalidProvider.status === 503 && (await invalidProvider.json()).error.code === "TTS_NOT_CONFIGURED", "Unknown TTS provider fails closed");
+  check(
+    invalidProvider.status === 503 &&
+      (await invalidProvider.json()).error.code === "TTS_NOT_CONFIGURED" &&
+      invalidProvider.headers.get("x-kuro-tts-provider") === null &&
+      invalidProvider.headers.get("x-kuro-tts-voice") === null,
+    "Unknown TTS provider fails closed without exposing vendor headers",
+  );
 }
 
 // 1-3. Valid role requests (explainer, learner, third role) and unique role mapping
@@ -1419,6 +1451,8 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
         lower.includes("deepgram_api_key") ||
         lower.includes("@google/genai") ||
         lower.includes("aura-2-") ||
+        lower.includes("x-kuro-tts-provider") ||
+        lower.includes("x-kuro-tts-voice") ||
         prebuiltVoices.some((voiceName) => new RegExp(`\\b${voiceName}\\b`, "i").test(lower))
       );
     });
@@ -1465,13 +1499,13 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
       leoVoices.every(
         (p) =>
           p.identityProfileId === "kuromate_leo_v1" &&
-          p.deepgramVoice === "aura-2-aries-en" &&
+          p.deepgramVoice === "aura-2-hermes-en" &&
           p.voice === "Puck" &&
           p.fallbackVoice === "Puck",
       ) &&
         leoVoices[1].profileId === "kuromate_explainer_v1" &&
         leoVoices[2].profileId === "kuromate_skeptic_v1",
-      "[ID 02] Leo always retains aura-2-aries-en & Puck across learner/explainer/skeptic roles",
+      "[ID 02] Leo always retains aura-2-hermes-en & Puck across learner/explainer/skeptic roles",
     );
     check(
       samVoices.every(
@@ -1510,7 +1544,8 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
       role: "skeptic",
     });
     check(
-      isAllowedDeepgramVoice("aura-2-aries-en") &&
+      isAllowedDeepgramVoice("aura-2-hermes-en") &&
+        !isAllowedDeepgramVoice("aura-2-aries-en") &&
         !isAllowedDeepgramVoice("aura-2-apollo-en") &&
         ALLOWED_DEEPGRAM_VOICES.length === 6 &&
         guest1.deepgramVoice === "aura-2-athena-en" &&
@@ -1518,7 +1553,7 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
         guest3.deepgramVoice === "aura-2-luna-en" &&
         guest1SwappedRole.deepgramVoice === "aura-2-athena-en" &&
         guest1SwappedRole.profileId === "kuromate_skeptic_v1",
-      "[ID 03b] Deepgram allowlist removes apollo, maps Aries for Leo, and locks Guest 1-3 identities across roles",
+      "[ID 03b] Deepgram allowlist removes aries and apollo, maps Hermes for Leo, and locks Guest 1-3 identities across roles",
     );
   }
 
@@ -1698,7 +1733,7 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
       "[ID 11] Direct resolveKuromateIdentityProfile respects Maya regardless of skeptic role",
     );
 
-    // ID-12: Deepgram route handler locks Leo=Aries (explainer) & Maya=Thalia (learner), and safely handles unknown identity
+    // ID-12: Deepgram route handler locks Leo=Hermes (explainer) & Maya=Thalia (learner), strips vendor headers, and safely handles unknown identity
     const dgCaptured = [];
     const dgEnv = {
       KURO_TTS_PROVIDER: "deepgram",
@@ -1758,12 +1793,115 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
     check(
       resLeoExp.status === 200 &&
         resMayaLrn.status === 200 &&
-        dgCaptured[0] === "aura-2-aries-en" &&
+        dgCaptured[0] === "aura-2-hermes-en" &&
         dgCaptured[1] === "aura-2-thalia-en" &&
         resLeoExp.headers.get("X-Kuro-TTS-Identity") === "kuromate_leo_v1" &&
+        resLeoExp.headers.get("X-Kuro-TTS-Fallback-Used") === "false" &&
+        resLeoExp.headers.get("X-Kuro-TTS-Provider") === null &&
+        resLeoExp.headers.get("X-Kuro-TTS-Voice") === null &&
         resMayaLrn.headers.get("X-Kuro-TTS-Identity") === "kuromate_maya_v1" &&
-        resBadUnknownId.status === 400,
-      "[ID 12] Deepgram primary assigns aura-2-aries-en to Leo(explainer) & aura-2-thalia-en to Maya(learner) and rejects unknown identity IDs",
+        resMayaLrn.headers.get("X-Kuro-TTS-Provider") === null &&
+        resMayaLrn.headers.get("X-Kuro-TTS-Voice") === null &&
+        resBadUnknownId.status === 400 &&
+        resBadUnknownId.headers.get("X-Kuro-TTS-Provider") === null &&
+        resBadUnknownId.headers.get("X-Kuro-TTS-Voice") === null,
+      "[ID 12] Deepgram primary assigns aura-2-hermes-en to Leo(explainer) & aura-2-thalia-en to Maya(learner), strips vendor headers, and rejects unknown identity IDs",
+    );
+
+    // ID-13: Server telemetry retains Deepgram Hermes & Gemini Puck routing while HTTP responses withhold vendor headers
+    const leoMetaPrimary = await generateSegmentTts(
+      GenerateTtsRequestSchema.parse({
+        segmentId: "seg_leo_meta_1",
+        speakerId: "host_01",
+        role: "explainer",
+        voiceIdentityId: "kuromate_leo_v1",
+        hostName: "Leo",
+        text: "Wait—that change flips the outcome?",
+      }),
+      {
+        env: dgEnv,
+        requestId: "req_leo_hermes_meta",
+        deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(dgPcm), mimeType: "audio/wav" }),
+      },
+    );
+
+    let leoFallbackVoice = null;
+    const leoMetaFallback = await generateSegmentTts(
+      GenerateTtsRequestSchema.parse({
+        segmentId: "seg_leo_meta_2",
+        speakerId: "host_01",
+        role: "explainer",
+        voiceIdentityId: "kuromate_leo_v1",
+        hostName: "Leo",
+        text: "Leo falling back to Puck cleanly.",
+      }),
+      {
+        env: dgEnv,
+        sleepFn: async () => {},
+        deepgramTransport: async () => {
+          throw { status: 503 };
+        },
+        transport: async (call) => {
+          leoFallbackVoice = call.voice;
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      },
+    );
+
+    const capturedLogs = [];
+    const origConsoleInfo = console.info;
+    console.info = (...args) => {
+      capturedLogs.push(args.map((a) => String(a)).join(" "));
+    };
+    let leoLogResponse;
+    try {
+      leoLogResponse = await handleTtsPost(
+        makeJsonRequest({
+          segmentId: "seg_leo_log_1",
+          speakerId: "host_01",
+          role: "explainer",
+          voiceIdentityId: "kuromate_leo_v1",
+          hostName: "Leo",
+          text: "Server telemetry captures Hermes without leaking headers.",
+        }),
+        {
+          env: dgEnv,
+          requestId: "req_leo_log_check",
+          deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(dgPcm), mimeType: "audio/wav" }),
+        },
+      );
+    } finally {
+      console.info = origConsoleInfo;
+    }
+    const telemetryLine = capturedLogs.find((line) => line.startsWith("[kuro/tts] "));
+    const telemetryJson = telemetryLine ? JSON.parse(telemetryLine.slice("[kuro/tts] ".length)) : null;
+
+    check(
+      leoMetaPrimary.ok &&
+        leoMetaPrimary.meta.requestedProvider === "deepgram" &&
+        leoMetaPrimary.meta.resolvedProvider === "deepgram" &&
+        leoMetaPrimary.meta.resolvedVoice === "aura-2-hermes-en" &&
+        leoMetaPrimary.meta.requestedModel === "aura-2-hermes-en" &&
+        leoMetaPrimary.meta.resolvedModel === "aura-2-hermes-en" &&
+        leoMetaPrimary.meta.identityProfileId === "kuromate_leo_v1" &&
+        leoMetaPrimary.meta.fallbackUsed === false &&
+        leoMetaFallback.ok &&
+        leoFallbackVoice === "Puck" &&
+        leoMetaFallback.meta.resolvedProvider === "gemini" &&
+        leoMetaFallback.meta.resolvedVoice === "Puck" &&
+        leoMetaFallback.meta.identityProfileId === "kuromate_leo_v1" &&
+        leoMetaFallback.meta.fallbackUsed === true &&
+        leoLogResponse.status === 200 &&
+        leoLogResponse.headers.get("X-Kuro-TTS-Identity") === "kuromate_leo_v1" &&
+        leoLogResponse.headers.get("X-Kuro-TTS-Fallback-Used") === "false" &&
+        leoLogResponse.headers.get("X-Kuro-TTS-Provider") === null &&
+        leoLogResponse.headers.get("X-Kuro-TTS-Voice") === null &&
+        telemetryJson?.requestedProvider === "deepgram" &&
+        telemetryJson?.resolvedProvider === "deepgram" &&
+        telemetryJson?.resolvedVoice === "aura-2-hermes-en" &&
+        telemetryJson?.identityProfileId === "kuromate_leo_v1" &&
+        telemetryJson?.fallbackUsed === false,
+      "[ID 13] Server metadata and [kuro/tts] telemetry preserve Leo Hermes/Puck details while response headers stay privacy-clean",
     );
   }
 }

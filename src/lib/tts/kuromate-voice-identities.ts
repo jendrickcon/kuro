@@ -40,7 +40,7 @@ export const KUROMATE_IDENTITY_PROFILES: Readonly<
   kuromate_leo_v1: Object.freeze({
     identityProfileId: "kuromate_leo_v1",
     canonicalKuromate: "leo",
-    deepgramVoice: "aura-2-aries-en",
+    deepgramVoice: "aura-2-hermes-en",
     approvedVoice: "Puck",
     fallbackVoice: "Puck",
   }),

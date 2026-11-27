@@ -71,7 +71,6 @@ async function fetchCompiledBrowserSegmentAudio(
     const profileId =
       response.headers.get("X-Kuro-TTS-Profile") ?? response.headers.get("X-Kuro-Profile-Id");
     const voiceIdentityId = response.headers.get("X-Kuro-TTS-Identity");
-    const resolvedVoice = response.headers.get("X-Kuro-TTS-Voice");
     const requestId = response.headers.get("X-Kuro-Request-Id");
     let hostedState = parseHostedStateHeader(response.headers.get("X-Kuro-TTS-Hosted-State"));
 
@@ -160,7 +159,6 @@ async function fetchCompiledBrowserSegmentAudio(
       retryAfterHeader,
       profileId,
       voiceIdentityId,
-      resolvedVoice,
       requestId,
     };
   } catch (err) {

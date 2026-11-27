@@ -110,9 +110,6 @@ export async function handleTtsPost(
     sanitizedRetryAfter !== undefined
       ? { "X-Kuro-TTS-Retry-After": String(sanitizedRetryAfter) }
       : {};
-  const providerHeader = result.meta.resolvedProvider ?? result.meta.provider ?? "gemini";
-  const safeVoiceHeader =
-    result.meta.resolvedVoice ?? result.meta.identityProfileId;
 
   if (!result.ok) {
     return Response.json(result.response, {
@@ -120,8 +117,6 @@ export async function handleTtsPost(
       headers: {
         "Cache-Control": "no-store",
         "X-Kuro-Request-Id": requestId,
-        "X-Kuro-TTS-Provider": providerHeader,
-        "X-Kuro-TTS-Voice": safeVoiceHeader,
         "X-Kuro-TTS-Retry-Used": String(Boolean(result.meta.retryUsed)),
         "X-Kuro-TTS-Fallback-Used": String(result.meta.fallbackUsed),
         "X-Kuro-TTS-Quota-Class": result.meta.quotaClass,
@@ -148,8 +143,6 @@ export async function handleTtsPost(
     "X-Kuro-Profile-Id": result.profile.profileId,
     "X-Kuro-TTS-Profile": result.profile.profileId,
     "X-Kuro-TTS-Identity": result.profile.identityProfileId,
-    "X-Kuro-TTS-Provider": providerHeader,
-    "X-Kuro-TTS-Voice": safeVoiceHeader,
     "X-Kuro-TTS-Retry-Used": String(Boolean(result.meta.retryUsed)),
     "X-Kuro-TTS-Hosted-State": result.meta.hostedState,
     "X-Kuro-Audio-Bytes": String(result.audio.byteLength),
