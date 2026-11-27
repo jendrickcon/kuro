@@ -11,8 +11,9 @@ export interface CaptionPanelProps {
   previousHost: Host | undefined;
   status: PlaybackStatus;
   audioAvailability: AudioAvailability;
-  segmentHasAudio?: boolean;
-  segmentAudioFailed?: boolean;
+  isSamplePreview?: boolean;
+  isBufferingAtBoundary?: boolean;
+  bufferingTurnRange?: string | null;
   onReplay: () => void;
 }
 
@@ -24,20 +25,15 @@ export function CaptionPanel({
   previousSegment,
   previousHost,
   status,
-  audioAvailability,
-  segmentHasAudio,
-  segmentAudioFailed = false,
+  isSamplePreview = false,
+  isBufferingAtBoundary = false,
+  bufferingTurnRange = null,
   onReplay,
 }: CaptionPanelProps) {
   const speakerName = activeHost?.name ?? currentSegment.speakerId;
   const speakerRole = activeHost?.role;
   const accentColor = activeHost?.accentColor ?? "#1d4ed8";
   const panelStyle = { borderLeftColor: accentColor } as CSSProperties;
-  const hasKnownAudioStatus = typeof segmentHasAudio === "boolean";
-  const segmentMissingAudio = hasKnownAudioStatus
-    ? segmentAudioFailed && !segmentHasAudio
-    : audioAvailability === "partial" &&
-      !(typeof currentSegment.audioUrl === "string" && currentSegment.audioUrl.trim().length > 0);
 
   return (
     <section
@@ -58,7 +54,11 @@ export function CaptionPanel({
               {speakerRole}
             </span>
           ) : null}
-          {status === "paused" ? (
+          {isBufferingAtBoundary ? (
+            <span className="rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-950">
+              Preparing turns {bufferingTurnRange ?? "next"}…
+            </span>
+          ) : status === "paused" ? (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-900">
               Paused
             </span>
@@ -70,9 +70,9 @@ export function CaptionPanel({
         </span>
       </div>
 
-      {segmentMissingAudio ? (
-        <p className="mb-2 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
-          Audio unavailable — showing caption
+      {isSamplePreview ? (
+        <p className="mb-2 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-950">
+          Sample Preview — built-in timed walkthrough (no live audio keys used)
         </p>
       ) : null}
 

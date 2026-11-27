@@ -48,8 +48,14 @@ export function buildEpisodeUserPrompt(request: CreateEpisodeRequest): string {
       : "Use exactly 3 hosts: 'explainer', 'learner', and a distinct third perspective ('skeptic', 'storyteller', 'specialist', or 'moderator') who meaningfully challenges, exemplifies, or bridges ideas.";
   const toneGuidance =
     request.tone === "casual"
-      ? "Tone: casual — warm, conversational, encouraging clarity."
-      : "Tone: serious — focused, analytical, disciplined clarity without stiffness.";
+      ? [
+          "Tone: casual — warm, brisk, college-student-friendly conversation that sounds genuinely spoken aloud, not like textbook paragraphs.",
+          "- Shape spoken delivery through natural wording and punctuation: use natural contractions, varied sentence length, crisp questions, brief em-dash interruptions where natural, and genuine exclamation marks only on surprised or excited reactions.",
+          "- Use varied, context-appropriate short reactions (for rhythm/punctuation inspiration only—never repeat or force these exact examples: \"That's a good way to look at it.\", \"Wait—that changes the result?\", \"Oh, totally!\", \"So what happens next?\").",
+          "- Avoid repeated catchphrases, starting every turn with the same reaction, excessive exclamation marks, cartoonish enthusiasm, filler-heavy lines, forced slang, repetitive agreement, or flat textbook sentences ending only in periods.",
+          "- Keep every turn <= 320 characters and strictly schema-valid.",
+        ].join("\n")
+      : "Tone: serious — focused, precise, analytical, calm, structured, non-dramatic clarity without stiffness.";
 
   return [
     `Create a ${request.length} (${turnRange} dialogue segments) conversation with ${request.hostCount} Kuromates.`,

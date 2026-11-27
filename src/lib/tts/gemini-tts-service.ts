@@ -2,6 +2,7 @@ import {
   AudioInspectionError,
   decodeAndInspectTtsAudio,
   inspectTtsAudioBuffer,
+  type AudioInspectionFailureReason,
   type InspectedAudioResult,
 } from "@/lib/tts/audio-inspect";
 import {
@@ -43,13 +44,18 @@ import {
 export const MAX_TTS_MODEL_CHOICES = 2;
 /** Maximum automatic model switches permitted on one `/api/tts` request. */
 export const MAX_TTS_MODEL_SWITCHES = 1;
-/** At most one bounded regeneration when the active model returns empty or corrupt audio bytes. */
+/** At most one bounded regeneration when the active Gemini model returns empty or corrupt audio bytes. */
 export const MAX_TTS_REGENERATION_ATTEMPTS = 1;
+/** At most one bounded targeted retry on Deepgram for eligible transient capacity/incomplete failures. */
+export const MAX_DEEPGRAM_TARGETED_RETRIES = 1;
+export const DEEPGRAM_RETRY_MIN_DELAY_MS = 250;
+export const DEEPGRAM_RETRY_DEFAULT_DELAY_MS = 350;
+export const DEEPGRAM_RETRY_MAX_DELAY_MS = 2_000;
 /**
  * Absolute ceiling on upstream TTS provider calls per request:
  * - Normal success: 1 call
- * - Primary capacity failure + fallback success: 2 calls
- * - Absolute max (1 primary capacity failure + 1 fallback + 1 malformed-audio repair): 3 calls
+ * - Primary fail + targeted retry (or 1 fallback): 2 calls
+ * - Absolute max (Deepgram attempt 1 + targeted Deepgram retry + 1 Gemini fallback, or equivalent Gemini bound): 3 calls
  */
 export const MAX_TTS_PROVIDER_ATTEMPTS = 3;
 
@@ -57,7 +63,13 @@ export const MAX_TTS_PROVIDER_ATTEMPTS = 3;
 export type TtsProvider = "deepgram" | "gemini";
 
 export interface GenerateSegmentTtsMeta {
-  /** Active provider for sanitized server telemetry only. */
+  /** Request correlation identifier for sanitized server logs and response headers. */
+  requestId?: string;
+  /** Initial configured primary provider requested for this call. */
+  requestedProvider?: TtsProvider;
+  /** Provider that handled the final/winning attempt (`deepgram` or `gemini`). */
+  resolvedProvider?: TtsProvider;
+  /** Active provider alias for sanitized server telemetry only. */
   provider?: TtsProvider;
   segmentId: string;
   speakerId: string;
@@ -65,7 +77,10 @@ export interface GenerateSegmentTtsMeta {
   identityProfileId: KuromateIdentityProfileId;
   requestedModel: string;
   resolvedModel: string;
+  /** Server-selected voice ID for telemetry/headers (excludes Gemini model IDs). */
+  resolvedVoice?: string;
   routePreference: TtsRoutePreference;
+  retryUsed?: boolean;
   fallbackUsed: boolean;
   modelSwitches: number;
   providerAttempts: number;
@@ -105,9 +120,12 @@ export interface GenerateSegmentTtsOptions {
   timeoutMs?: number;
   maxAudioBytes?: number;
   signal?: AbortSignal;
+  requestId?: string;
   transport?: GeminiTtsTransport;
   /** Injectable primary transport for tests; production builds the native-fetch client from `DEEPGRAM_API_KEY`. */
   deepgramTransport?: DeepgramTtsTransport;
+  /** Injectable abort-aware backoff timer for deterministic unit tests. */
+  sleepFn?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export function isAllowedGeminiTtsModel(value: string): value is AllowedGeminiTtsModel {
@@ -172,6 +190,84 @@ export function resolveTtsProvider(
     configured: true,
     provider: !hasGeminiTransportOverride && deepgramKeyPresent ? "deepgram" : "gemini",
   };
+}
+
+/** Returns bounded abort-aware retry delay (ms) clamped strictly to [250, 2000] ms. */
+export function resolveDeepgramRetryDelayMs(err: GeminiTtsError): number {
+  if (err.retryAfterSeconds === undefined || !Number.isFinite(err.retryAfterSeconds)) {
+    return DEEPGRAM_RETRY_DEFAULT_DELAY_MS;
+  }
+  const requestedMs = Math.round(err.retryAfterSeconds * 1000);
+  return Math.min(DEEPGRAM_RETRY_MAX_DELAY_MS, Math.max(DEEPGRAM_RETRY_MIN_DELAY_MS, requestedMs));
+}
+
+/**
+ * Determines whether a first Deepgram failure qualifies for 1 targeted retry on Deepgram.
+ * Hard-stops (auth, invalid input, oversize, config, abort, safety, unexpected MIME, long quota) never retry.
+ */
+export function isDeepgramTargetedRetryEligible(
+  err: GeminiTtsError,
+  inspectErrReason?: AudioInspectionFailureReason,
+): boolean {
+  if (err.quotaClass === "long_quota_wait") {
+    return false;
+  }
+  if (err.kind === "invalid_audio") {
+    return inspectErrReason === "invalid_header";
+  }
+  return (
+    err.kind === "rate_limited" ||
+    err.kind === "service_unavailable" ||
+    err.kind === "timeout" ||
+    err.kind === "unavailable" ||
+    err.kind === "empty_audio"
+  );
+}
+
+/** Hard-stops must never retry Deepgram OR switch providers to Gemini Flash-Lite. */
+function isDeepgramHardStopError(
+  err: GeminiTtsError,
+  inspectErrReason?: AudioInspectionFailureReason,
+): boolean {
+  if (err.quotaClass === "long_quota_wait") {
+    return true;
+  }
+  if (
+    err.kind === "missing_key" ||
+    err.kind === "unsupported_model" ||
+    err.kind === "auth_error" ||
+    err.kind === "safety_blocked" ||
+    err.kind === "invalid_request" ||
+    err.kind === "client_aborted" ||
+    err.kind === "oversized_audio"
+  ) {
+    return true;
+  }
+  return inspectErrReason === "unexpected_mime" || inspectErrReason === "oversized_audio";
+}
+
+function defaultAbortAwareSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(
+      new GeminiTtsError("client_aborted", "Voice preview request was cancelled.", false),
+    );
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new GeminiTtsError("client_aborted", "Voice preview request was cancelled.", false));
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function buildFailureResult(
@@ -318,7 +414,18 @@ export async function generateSegmentTts(
     role: request.role,
   });
 
-  let metaProvider: TtsProvider | undefined;
+  const sleep = options.sleepFn ?? defaultAbortAwareSleep;
+  const providerSelection = resolveTtsProvider(env, options.transport !== undefined);
+  const resolvedInitialProvider: TtsProvider | undefined = providerSelection.configured
+    ? providerSelection.provider
+    : undefined;
+  const initialRequestedModel =
+    resolvedInitialProvider === "deepgram" ? profile.deepgramVoice : requestedModel;
+
+  let metaProvider: TtsProvider | undefined = resolvedInitialProvider;
+  let retryUsed = false;
+  let resolvedVoice: string =
+    resolvedInitialProvider === "deepgram" ? profile.deepgramVoice : profile.voice;
 
   const makeMeta = (
     providerAttempts: number,
@@ -328,21 +435,26 @@ export async function generateSegmentTts(
     quotaClass: TtsQuotaClass,
     hostedState: HostedTtsHealthState,
     retryAfterSeconds?: number,
+    overrideResolvedVoice?: string,
   ): GenerateSegmentTtsMeta => ({
+    ...(options.requestId ? { requestId: options.requestId } : {}),
+    ...(resolvedInitialProvider ? { requestedProvider: resolvedInitialProvider } : {}),
+    ...(metaProvider ? { resolvedProvider: metaProvider, provider: metaProvider } : {}),
     segmentId: request.segmentId,
     speakerId: request.speakerId,
     profileId: profile.profileId,
     identityProfileId: profile.identityProfileId,
-    requestedModel,
+    requestedModel: initialRequestedModel,
     resolvedModel,
+    resolvedVoice: overrideResolvedVoice ?? resolvedVoice,
     routePreference,
+    retryUsed,
     fallbackUsed,
     modelSwitches,
     providerAttempts,
     sdkRetryDisabled: true,
     quotaClass,
     hostedState,
-    ...(metaProvider ? { provider: metaProvider } : {}),
     ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     latencyMs: Date.now() - startedAt,
   });
@@ -370,7 +482,6 @@ export async function generateSegmentTts(
   const distinctFallbackModel =
     fallbackConfig.model && fallbackConfig.model !== requestedModel ? fallbackConfig.model : null;
 
-  const providerSelection = resolveTtsProvider(env, options.transport !== undefined);
   if (!providerSelection.configured) {
     return buildFailureResult(
       503,
@@ -381,7 +492,6 @@ export async function generateSegmentTts(
     );
   }
   const useDeepgram = providerSelection.provider === "deepgram";
-  metaProvider = providerSelection.provider;
 
   const apiKey =
     options.apiKey !== undefined ? options.apiKey.trim() : (env.GEMINI_API_KEY?.trim() ?? "");
@@ -427,7 +537,7 @@ export async function generateSegmentTts(
       "TTS_GENERATION_FAILED",
       "Voice preview request was cancelled.",
       false,
-      makeMeta(0, requestedModel, false, 0, "none", "hosted_unavailable"),
+      makeMeta(0, initialRequestedModel, false, 0, "none", "hosted_unavailable"),
     );
   }
 
@@ -473,6 +583,7 @@ export async function generateSegmentTts(
   let fallbackUsed = routedDirectlyToFallback;
   if (useDeepgram && routedDirectlyToFallback) {
     metaProvider = "gemini";
+    resolvedVoice = profile.fallbackVoice;
   }
   let modelSwitches = 0;
   let providerAttempts = 0;
@@ -480,65 +591,126 @@ export async function generateSegmentTts(
   let primaryQuotaClass: TtsQuotaClass = "none";
   let primaryRetryAfterSeconds: number | undefined;
 
-  // Deepgram primary: exactly one attempt, then at most one switch to Gemini Flash-Lite on capacity errors.
+  // Deepgram primary: attempt 1 -> at most 1 bounded transient retry -> at most 1 capacity switch to Gemini Flash-Lite (max 3 total).
   if (useDeepgram && deepgramTransport && !routedDirectlyToFallback) {
-    providerAttempts = 1;
-    const deepgramLabel = profile.deepgramVoice;
-    try {
-      const rawAudio = await deepgramTransport({
-        voice: profile.deepgramVoice,
-        text: request.text,
-        timeoutMs: options.timeoutMs ?? DEEPGRAM_TTS_TIMEOUT_MS,
-        signal: options.signal,
-      });
+    const deepgramVoice = profile.deepgramVoice;
+    let shouldSwitchToGemini = false;
+    let switchError: GeminiTtsError | null = null;
 
-      let inspected: { bytes: Buffer; metadata: InspectedAudioResult };
-      try {
-        inspected = inspectTtsAudioBuffer(rawAudio.bytes, rawAudio.mimeType, maxAudioBytes);
-      } catch (inspectErr) {
-        if (inspectErr instanceof AudioInspectionError) {
-          return mapProviderFailure(
-            mapInspectionError(inspectErr).error,
-            makeMeta(1, deepgramLabel, false, 0, "none", "hosted_unavailable"),
-            "none",
-            "hosted_unavailable",
-          );
-        }
-        throw inspectErr;
+    for (let dgTry = 0; dgTry <= MAX_DEEPGRAM_TARGETED_RETRIES; dgTry += 1) {
+      providerAttempts += 1;
+      if (dgTry > 0) {
+        retryUsed = true;
       }
 
-      return {
-        ok: true,
-        httpStatus: 200,
-        audioBytes: inspected.bytes,
-        audio: inspected.metadata,
-        profile,
-        meta: {
-          ...makeMeta(1, deepgramLabel, false, 0, "none", "primary_available"),
-          byteLength: inspected.metadata.byteLength,
-          durationMs: inspected.metadata.durationMs,
-          container: inspected.metadata.container,
-        },
-      };
-    } catch (err) {
-      const providerErr = classifyGeminiTtsError(err, Boolean(options.signal?.aborted));
-      if (
-        fallbackTargetModel !== null &&
-        modelSwitches < MAX_TTS_MODEL_SWITCHES &&
-        isTtsCapacityFallbackEligible(providerErr) &&
-        !options.signal?.aborted
-      ) {
-        if (providerErr.quotaClass !== "none") {
-          primaryQuotaClass = providerErr.quotaClass;
+      let inspectErrReason: AudioInspectionFailureReason | undefined;
+      try {
+        const rawAudio = await deepgramTransport({
+          voice: deepgramVoice,
+          text: request.text,
+          timeoutMs: options.timeoutMs ?? DEEPGRAM_TTS_TIMEOUT_MS,
+          signal: options.signal,
+        });
+
+        let inspected: { bytes: Buffer; metadata: InspectedAudioResult };
+        try {
+          inspected = inspectTtsAudioBuffer(rawAudio.bytes, rawAudio.mimeType, maxAudioBytes);
+        } catch (inspectErr) {
+          if (inspectErr instanceof AudioInspectionError) {
+            inspectErrReason = inspectErr.reason;
+            throw mapInspectionError(inspectErr).error;
+          }
+          throw inspectErr;
         }
-        if (providerErr.retryAfterSeconds !== undefined) {
-          primaryRetryAfterSeconds = providerErr.retryAfterSeconds;
+
+        return {
+          ok: true,
+          httpStatus: 200,
+          audioBytes: inspected.bytes,
+          audio: inspected.metadata,
+          profile,
+          meta: {
+            ...makeMeta(
+              providerAttempts,
+              deepgramVoice,
+              false,
+              0,
+              "none",
+              "primary_available",
+              undefined,
+              deepgramVoice,
+            ),
+            byteLength: inspected.metadata.byteLength,
+            durationMs: inspected.metadata.durationMs,
+            container: inspected.metadata.container,
+          },
+        };
+      } catch (err) {
+        const providerErr = classifyGeminiTtsError(err, Boolean(options.signal?.aborted));
+        if (isDeepgramHardStopError(providerErr, inspectErrReason)) {
+          const hardState: HostedTtsHealthState =
+            providerErr.quotaClass === "long_quota_wait"
+              ? "all_hosted_daily_exhausted"
+              : "hosted_unavailable";
+          return mapProviderFailure(
+            providerErr,
+            makeMeta(
+              providerAttempts,
+              deepgramVoice,
+              false,
+              0,
+              providerErr.quotaClass,
+              hardState,
+              providerErr.retryAfterSeconds,
+              deepgramVoice,
+            ),
+            providerErr.quotaClass,
+            hardState,
+            providerErr.retryAfterSeconds,
+          );
         }
-        modelSwitches += 1;
-        fallbackUsed = true;
-        activeModel = fallbackTargetModel;
-        metaProvider = "gemini";
-      } else {
+
+        if (
+          dgTry < MAX_DEEPGRAM_TARGETED_RETRIES &&
+          providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS &&
+          isDeepgramTargetedRetryEligible(providerErr, inspectErrReason) &&
+          !options.signal?.aborted
+        ) {
+          try {
+            await sleep(resolveDeepgramRetryDelayMs(providerErr), options.signal);
+          } catch (sleepErr) {
+            const abortErr = classifyGeminiTtsError(sleepErr, true);
+            return mapProviderFailure(
+              abortErr,
+              makeMeta(
+                providerAttempts,
+                deepgramVoice,
+                false,
+                0,
+                "none",
+                "hosted_unavailable",
+                undefined,
+                deepgramVoice,
+              ),
+              "none",
+              "hosted_unavailable",
+            );
+          }
+          continue;
+        }
+
+        if (
+          fallbackTargetModel !== null &&
+          modelSwitches < MAX_TTS_MODEL_SWITCHES &&
+          isTtsCapacityFallbackEligible(providerErr) &&
+          providerAttempts < MAX_TTS_PROVIDER_ATTEMPTS &&
+          !options.signal?.aborted
+        ) {
+          shouldSwitchToGemini = true;
+          switchError = providerErr;
+          break;
+        }
+
         const failedState: HostedTtsHealthState =
           providerErr.quotaClass === "long_quota_wait"
             ? "all_hosted_daily_exhausted"
@@ -546,19 +718,34 @@ export async function generateSegmentTts(
         return mapProviderFailure(
           providerErr,
           makeMeta(
-            1,
-            deepgramLabel,
+            providerAttempts,
+            deepgramVoice,
             false,
             0,
             providerErr.quotaClass,
             failedState,
             providerErr.retryAfterSeconds,
+            deepgramVoice,
           ),
           providerErr.quotaClass,
           failedState,
           providerErr.retryAfterSeconds,
         );
       }
+    }
+
+    if (shouldSwitchToGemini && switchError && fallbackTargetModel !== null) {
+      if (switchError.quotaClass !== "none") {
+        primaryQuotaClass = switchError.quotaClass;
+      }
+      if (switchError.retryAfterSeconds !== undefined) {
+        primaryRetryAfterSeconds = switchError.retryAfterSeconds;
+      }
+      modelSwitches += 1;
+      fallbackUsed = true;
+      activeModel = fallbackTargetModel;
+      metaProvider = "gemini";
+      resolvedVoice = profile.fallbackVoice;
     }
   }
 

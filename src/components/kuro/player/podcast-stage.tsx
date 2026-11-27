@@ -45,6 +45,8 @@ export interface PodcastStageProps {
   status: PlaybackStatus;
   reactionHostId: string | null;
   isSilentFallback?: boolean;
+  isInPadding?: boolean;
+  isSamplePreview?: boolean;
   isPreparingAudio?: boolean;
   theme?: StageTheme;
 }
@@ -60,6 +62,8 @@ export function PodcastStage({
   status,
   reactionHostId,
   isSilentFallback = false,
+  isInPadding = false,
+  isSamplePreview = false,
   isPreparingAudio = false,
   theme = DEFAULT_STAGE_THEME,
 }: PodcastStageProps) {
@@ -74,12 +78,17 @@ export function PodcastStage({
         text: "PREPARING",
         toneClass: "border-blue-300 bg-blue-700 text-white",
       }
-    : status === "playing" && isSilentFallback
+    : isSamplePreview && status === "playing"
       ? {
-          text: "TIMED CAPTIONS",
+          text: "SAMPLE PREVIEW",
           toneClass: "border-amber-300 bg-amber-600 text-white",
         }
-      : AIR_BADGES[status];
+      : status === "playing" && isSilentFallback
+        ? {
+            text: "PAUSED",
+            toneClass: "border-amber-300 bg-amber-600 text-white",
+          }
+        : AIR_BADGES[status];
   const paddedTurn = String(currentSegmentIndex + 1).padStart(2, "0");
   const paddedTotal = String(episode.segments.length).padStart(2, "0");
 
@@ -87,6 +96,9 @@ export function PodcastStage({
     if (isPreparingAudio) return "idle";
     if (status === "complete") return "complete";
     if (status === "playing") {
+      if (isInPadding) {
+        return reactionHostId === hostId ? "reacting" : "listening";
+      }
       if (hostId === currentSegment.speakerId) {
         return isSilentFallback ? "captioning" : "speaking";
       }

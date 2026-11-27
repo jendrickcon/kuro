@@ -22,8 +22,8 @@ export interface EpisodePlayerProps {
 }
 
 /**
- * Active Kuro Studio multi-host player rendered strictly after initial voice preparation
- * or explicit caption/partial start, driven by the sequential paced audio queue.
+ * Active Kuro Studio multi-host player driven by the compiled WP-012 audio timeline
+ * (or Sample Preview timed walkthrough when explicitly triggered via Try sample episode).
  */
 export function EpisodePlayer({
   episode,
@@ -38,25 +38,32 @@ export function EpisodePlayer({
     return null;
   }
 
-  const currentSegment = snapshot.currentSegment;
+  const currentSegment = snapshot.activeSegment ?? episode.segments[0];
   if (!currentSegment) {
     return null;
   }
 
   function handleBackToForm() {
-    queue.cancelPreparation();
+    queue.cancel();
     queue.dispose();
     onBack();
   }
 
-  const audioAvailability =
-    snapshot.audioMode === "timed-fallback" ||
-    snapshot.failedCount > 0 ||
-    snapshot.outageState !== "none"
-      ? "partial"
-      : snapshot.readyCount === snapshot.totalSegments && snapshot.totalSegments > 0
-        ? "full"
-        : "none";
+  const audioAvailability = snapshot.isSamplePreview
+    ? "none"
+    : snapshot.canDownloadAudio
+      ? "full"
+      : "partial";
+
+  const canPrev = snapshot.isSamplePreview
+    ? snapshot.activeSegmentIndex > 0
+    : snapshot.canScrub && snapshot.activeSegmentIndex > 0;
+  const maxSeekableIndex = snapshot.isSamplePreview
+    ? snapshot.totalTurns - 1
+    : snapshot.timeline.length - 1;
+  const canNext = snapshot.isSamplePreview
+    ? snapshot.activeSegmentIndex < snapshot.totalTurns - 1
+    : snapshot.canScrub && snapshot.activeSegmentIndex < maxSeekableIndex;
 
   return (
     <article aria-label={episode.title} className="space-y-2.5">
@@ -65,13 +72,13 @@ export function EpisodePlayer({
           <div className="flex flex-wrap items-center gap-2">
             <span
               className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
-                source === "generated"
+                source === "generated" && !snapshot.isSamplePreview
                   ? "border-emerald-300 bg-emerald-50 text-emerald-950"
                   : "border-amber-300 bg-amber-50 text-amber-950"
               }`}
             >
-              {source === "sample"
-                ? "Sample episode"
+              {snapshot.isSamplePreview || source === "sample"
+                ? "Sample Preview"
                 : source === "generated"
                   ? "Generated episode"
                   : "Mock episode"}
@@ -101,69 +108,66 @@ export function EpisodePlayer({
       <PlayerNotice
         source={source}
         usedFallback={usedFallback}
-        usedFallbackAudio={snapshot.usedFallbackAudio}
-        primaryDailyExhausted={snapshot.primaryModelState === "daily_exhausted"}
-        allHostedDailyExhausted={snapshot.allHostedDailyExhausted}
-        hostedTtsState={snapshot.hostedTtsState}
-        episodeAudioSummaryLabel={snapshot.episodeAudioSummaryLabel}
-        currentSegmentHasAudio={snapshot.currentSegmentHasAudio}
-        audioMode={snapshot.audioMode}
         episode={episode}
         requestedOptions={requestedOptions}
-        audioAvailability={audioAvailability}
-        notice={snapshot.notice}
+        snapshot={snapshot}
       />
 
       <PodcastStage
         episode={episode}
         currentSegment={currentSegment}
-        currentSegmentIndex={snapshot.currentIndex}
-        status={snapshot.stageStatus}
+        currentSegmentIndex={snapshot.activeSegmentIndex}
+        status={snapshot.playbackStatus}
         reactionHostId={snapshot.reactionHostId}
-        isSilentFallback={snapshot.isTimedFallbackActive}
+        isSilentFallback={snapshot.isSamplePreview}
+        isInPadding={snapshot.isInPadding}
+        isSamplePreview={snapshot.isSamplePreview}
+        isPreparingAudio={snapshot.isBufferingAtBoundary}
       />
 
       <CaptionPanel
         activeHost={snapshot.activeHost}
         currentSegment={currentSegment}
-        currentSegmentIndex={snapshot.currentIndex}
-        totalSegments={snapshot.totalSegments}
+        currentSegmentIndex={snapshot.activeSegmentIndex}
+        totalSegments={snapshot.totalTurns}
         previousSegment={snapshot.previousSegment}
         previousHost={snapshot.previousHost}
-        status={snapshot.stageStatus}
+        status={snapshot.playbackStatus}
         audioAvailability={audioAvailability}
-        segmentHasAudio={snapshot.currentSegmentHasAudio}
-        segmentAudioFailed={
-          snapshot.currentSegmentFailed ||
-          (snapshot.audioMode === "timed-fallback" && !snapshot.currentSegmentHasAudio)
-        }
+        isSamplePreview={snapshot.isSamplePreview}
+        isBufferingAtBoundary={snapshot.isBufferingAtBoundary}
+        bufferingTurnRange={snapshot.bufferingTurnRange}
         onReplay={queue.replay}
       />
 
       <AudioStatusBar
         snapshot={snapshot}
         onResumeAutoplay={queue.play}
-        onRetryCurrentSegment={queue.retryCurrentSegment}
-        onSkipCurrentSegment={queue.skipCurrentSegment}
-        onContinueWithTimedCaptions={queue.continueWithTimedCaptions}
-        onRetryHostedAudio={queue.retryHostedAudio}
+        onRetryFailedTurns={queue.retryFailedTurns}
         onBackToForm={handleBackToForm}
       />
 
       <PlaybackControls
         episode={episode}
-        status={snapshot.stageStatus}
-        audioStatus={snapshot.status}
-        audioMode={snapshot.audioMode}
-        currentSegmentIndex={snapshot.currentIndex}
-        totalSegments={snapshot.totalSegments}
-        playbackProgress={snapshot.playbackProgress}
-        canPrev={snapshot.canPrev}
-        canNext={snapshot.canNext}
+        status={snapshot.playbackStatus}
+        isSamplePreview={snapshot.isSamplePreview}
+        isBufferingAtBoundary={snapshot.isBufferingAtBoundary}
+        canPlay={snapshot.canPlay}
+        canScrub={snapshot.canScrub}
+        canDownloadAudio={snapshot.canDownloadAudio}
+        elapsedMs={snapshot.elapsedMs}
+        compiledDurationMs={snapshot.compiledDurationMs}
+        fullDurationMs={snapshot.fullDurationMs}
+        currentSegmentIndex={snapshot.activeSegmentIndex}
+        totalSegments={snapshot.totalTurns}
+        canPrev={canPrev}
+        canNext={canNext}
         onTogglePlayPause={queue.togglePlayPause}
         onPrevious={queue.previous}
         onNext={queue.next}
         onRestart={queue.restart}
+        onSeekToMs={queue.seekToMs}
+        onDownloadAudio={queue.downloadAudio}
       />
     </article>
   );

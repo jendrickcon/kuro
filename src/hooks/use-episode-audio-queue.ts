@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Episode } from "@contracts/episode.schema";
 import {
   resolveEpisodeVoiceIdentities,
   type KuromateIdentityProfileId,
@@ -10,20 +12,18 @@ import {
   type HostedTtsHealthState,
   type TtsErrorCode,
 } from "@/lib/tts/tts-contract";
+import { getBrowserTtsSessionCircuit } from "@/lib/tts/episode-audio-queue-engine";
 import {
-  buildIdleEpisodeSnapshot,
-  createEpisodeAudioQueueEngine,
-  getBrowserTtsSessionCircuit,
-  type AudioDriver,
-  type AudioDriverCallbacks,
-  type AudioPlayOutcome,
-  type EpisodeAudioQueueController,
-  type EpisodeAudioQueueSnapshot,
-  type FetchSegmentAudioPayload,
-  type FetchSegmentAudioResult,
-} from "@/lib/tts/episode-audio-queue-engine";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { Episode } from "@contracts/episode.schema";
+  createEpisodeBatchCompiler,
+  type BatchAudioDriver,
+  type BatchAudioDriverCallbacks,
+  type BatchAudioPlayOutcome,
+  type CompilerSegmentRequestPayload,
+  type EpisodeBatchCompilerController,
+  type EpisodeBatchCompilerSnapshot,
+  type EpisodeSourceKind,
+  type FetchCompiledSegmentResult,
+} from "@/lib/tts/episode-batch-compiler";
 
 interface TtsErrorEnvelope {
   error?: {
@@ -47,10 +47,10 @@ function parseHostedStateHeader(value: string | null | undefined): HostedTtsHeal
   return parsed.success ? parsed.data : undefined;
 }
 
-async function fetchBrowserSegmentAudio(
-  payload: FetchSegmentAudioPayload,
+async function fetchCompiledBrowserSegmentAudio(
+  payload: CompilerSegmentRequestPayload,
   signal: AbortSignal,
-): Promise<FetchSegmentAudioResult> {
+): Promise<FetchCompiledSegmentResult> {
   try {
     const response = await fetch("/api/tts", {
       method: "POST",
@@ -59,15 +59,19 @@ async function fetchBrowserSegmentAudio(
       body: JSON.stringify(payload),
     });
 
-    const headerQuotaClass = parseQuotaClassHeader(
-      response.headers.get("X-Kuro-TTS-Quota-Class"),
-    );
+    const headerQuotaClass = parseQuotaClassHeader(response.headers.get("X-Kuro-TTS-Quota-Class"));
     const fallbackUsed = response.headers.get("X-Kuro-TTS-Fallback-Used") === "true";
+    const retryUsed = response.headers.get("X-Kuro-TTS-Retry-Used") === "true";
+    const rawAttempts = Number.parseInt(
+      response.headers.get("X-Kuro-Provider-Attempts") ?? "",
+      10,
+    );
     const retryAfterHeader =
       response.headers.get("X-Kuro-TTS-Retry-After") ?? response.headers.get("Retry-After");
     const profileId =
       response.headers.get("X-Kuro-TTS-Profile") ?? response.headers.get("X-Kuro-Profile-Id");
     const voiceIdentityId = response.headers.get("X-Kuro-TTS-Identity");
+    const requestId = response.headers.get("X-Kuro-Request-Id");
     let hostedState = parseHostedStateHeader(response.headers.get("X-Kuro-TTS-Hosted-State"));
 
     if (!response.ok) {
@@ -77,16 +81,14 @@ async function fetchBrowserSegmentAudio(
           : response.status === 504
             ? "TTS_TIMEOUT"
             : "TTS_PROVIDER_UNAVAILABLE";
-      let message = "Hosted Kuromate voice is unavailable right now. Captions remain active.";
+      let message = "Hosted Kuromate voice is unavailable right now.";
       let retryable = response.status >= 500 || response.status === 429;
       let quotaClass = headerQuotaClass;
 
       try {
         const json = (await response.json()) as TtsErrorEnvelope;
         const parsedCode = TtsErrorCodeSchema.safeParse(json?.error?.code);
-        if (parsedCode.success) {
-          errorCode = parsedCode.data;
-        }
+        if (parsedCode.success) errorCode = parsedCode.data;
         if (typeof json?.error?.message === "string" && json.error.message.trim()) {
           message = json.error.message.trim();
         }
@@ -125,34 +127,39 @@ async function fetchBrowserSegmentAudio(
         ok: false,
         httpStatus: 502,
         errorCode: "TTS_AUDIO_INVALID",
-        message: "Received an invalid audio response. Captions remain active.",
+        message: "Received an invalid audio response.",
         retryable: false,
+        voiceIdentityId,
       };
     }
 
     const durationMs = readDurationHeaderMs(response);
-    const blob = await response.blob();
-    if (blob.size === 0) {
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength === 0) {
       return {
         ok: false,
         httpStatus: 502,
         errorCode: "TTS_AUDIO_INVALID",
-        message: "Hosted audio response was empty. Captions remain active.",
+        message: "Hosted audio response was empty.",
         retryable: true,
+        voiceIdentityId,
       };
     }
 
     return {
       ok: true,
-      blob,
+      bytes,
       contentType,
       durationMs,
       fallbackUsed,
+      retryUsed,
+      providerAttempts: Number.isFinite(rawAttempts) ? rawAttempts : undefined,
       quotaClass: headerQuotaClass,
       hostedState,
       retryAfterHeader,
       profileId,
       voiceIdentityId,
+      requestId,
     };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
@@ -168,51 +175,38 @@ async function fetchBrowserSegmentAudio(
       ok: false,
       httpStatus: 503,
       errorCode: "TTS_PROVIDER_UNAVAILABLE",
-      message: "Unable to reach hosted Kuromate voice service. Captions remain active.",
+      message: "Unable to reach hosted Kuromate voice service.",
       retryable: true,
-      isNetworkError: true,
     };
   }
 }
 
-/** Creates one controlled reusable HTMLAudioElement driver for sequential playback without autoplay hacks. */
-function createBrowserAudioDriver(): AudioDriver {
+/** Single controlled HTMLAudioElement driver synced to compiled WAV batches without autoplay hacks. */
+function createBatchAudioDriver(): BatchAudioDriver {
   let element: HTMLAudioElement | null = typeof Audio !== "undefined" ? new Audio() : null;
   let activeGeneration = 0;
-  let currentCallbacks: AudioDriverCallbacks | null = null;
+  let currentCallbacks: BatchAudioDriverCallbacks | null = null;
 
   function clearHandlers(audio: HTMLAudioElement) {
     audio.onloadedmetadata = null;
-    audio.oncanplay = null;
+    audio.ontimeupdate = null;
     audio.onplay = null;
     audio.onpause = null;
     audio.onended = null;
     audio.onerror = null;
   }
 
-  function mapPlayError(err: unknown): AudioPlayOutcome {
+  function mapPlayError(err: unknown): BatchAudioPlayOutcome {
     const name = err instanceof Error ? err.name : "";
-    if (name === "NotAllowedError") {
-      return { ok: false, reason: "autoplay_blocked" };
-    }
-    if (name === "AbortError") {
-      return { ok: false, reason: "aborted" };
-    }
+    if (name === "NotAllowedError") return { ok: false, reason: "autoplay_blocked" };
+    if (name === "AbortError") return { ok: false, reason: "aborted" };
     return { ok: false, reason: "decode_error" };
   }
 
   function attachHandlers(audio: HTMLAudioElement, gen: number) {
-    audio.onloadedmetadata = () => {
+    audio.ontimeupdate = () => {
       if (gen !== activeGeneration) return;
-      const durationMs =
-        Number.isFinite(audio.duration) && audio.duration > 0
-          ? Math.round(audio.duration * 1000)
-          : null;
-      currentCallbacks?.onLoadedMetadata(durationMs);
-    };
-    audio.oncanplay = () => {
-      if (gen !== activeGeneration) return;
-      currentCallbacks?.onCanPlay();
+      currentCallbacks?.onTimeUpdate(Number.isFinite(audio.currentTime) ? audio.currentTime : 0);
     };
     audio.onplay = () => {
       if (gen !== activeGeneration) return;
@@ -233,15 +227,10 @@ function createBrowserAudioDriver(): AudioDriver {
   }
 
   return {
-    async loadAndPlay(
-      url: string,
-      startTimeSec: number,
-      callbacks: AudioDriverCallbacks,
-    ): Promise<AudioPlayOutcome> {
+    async loadAndPlay(url, startTimeSec, callbacks): Promise<BatchAudioPlayOutcome> {
       if (!element) {
         return { ok: false, reason: "decode_error" };
       }
-
       const audio = element;
       const gen = ++activeGeneration;
       currentCallbacks = callbacks;
@@ -249,14 +238,11 @@ function createBrowserAudioDriver(): AudioDriver {
       try {
         audio.pause();
       } catch {
-        // Ignore pause glitches prior to switching clip source.
+        // Ignore pause glitches before switching batch audio source.
       }
-
       audio.preload = "auto";
       audio.src = url;
-
       let pendingSeekApplied = startTimeSec <= 0;
-
       attachHandlers(audio, gen);
       audio.onloadedmetadata = () => {
         if (gen !== activeGeneration) return;
@@ -265,63 +251,64 @@ function createBrowserAudioDriver(): AudioDriver {
           try {
             audio.currentTime = startTimeSec;
           } catch {
-            // Ignore seek failure when browser metadata limits seeking.
+            // Ignore seek failure if browser delays seek readiness.
           }
         }
-        const durationMs =
+        const durMs =
           Number.isFinite(audio.duration) && audio.duration > 0
             ? Math.round(audio.duration * 1000)
             : null;
-        currentCallbacks?.onLoadedMetadata(durationMs);
+        currentCallbacks?.onLoadedMetadata?.(durMs);
       };
 
       try {
         await audio.play();
-        if (gen !== activeGeneration) {
-          return { ok: false, reason: "aborted" };
+        if (gen !== activeGeneration) return { ok: false, reason: "aborted" };
+        if (!pendingSeekApplied && startTimeSec > 0) {
+          pendingSeekApplied = true;
+          try {
+            audio.currentTime = startTimeSec;
+          } catch {
+            // Ignore seek failure.
+          }
         }
         return { ok: true };
       } catch (err) {
-        if (gen !== activeGeneration) {
-          return { ok: false, reason: "aborted" };
-        }
+        if (gen !== activeGeneration) return { ok: false, reason: "aborted" };
         return mapPlayError(err);
       }
     },
-
-    async resume(callbacks?: AudioDriverCallbacks): Promise<AudioPlayOutcome> {
-      if (!element) {
-        return { ok: false, reason: "decode_error" };
-      }
+    async resume(callbacks): Promise<BatchAudioPlayOutcome> {
+      if (!element) return { ok: false, reason: "decode_error" };
       const gen = activeGeneration;
-      if (callbacks) {
-        currentCallbacks = callbacks;
-      }
+      if (callbacks) currentCallbacks = callbacks;
       try {
         await element.play();
-        if (gen !== activeGeneration) {
-          return { ok: false, reason: "aborted" };
-        }
+        if (gen !== activeGeneration) return { ok: false, reason: "aborted" };
         return { ok: true };
       } catch (err) {
-        if (gen !== activeGeneration) {
-          return { ok: false, reason: "aborted" };
-        }
+        if (gen !== activeGeneration) return { ok: false, reason: "aborted" };
         return mapPlayError(err);
       }
     },
-
+    seekTo(timeSec) {
+      if (!element) return;
+      try {
+        element.currentTime = Math.max(0, timeSec);
+      } catch {
+        // Ignore seek failure when browser metadata is unavailable.
+      }
+    },
     pause() {
       if (!element) return 0;
-      const currentTime = Number.isFinite(element.currentTime) ? element.currentTime : 0;
+      const cur = Number.isFinite(element.currentTime) ? element.currentTime : 0;
       try {
         element.pause();
       } catch {
-        // Ignore browser pause quirks.
+        // Ignore pause quirks.
       }
-      return currentTime;
+      return cur;
     },
-
     stop() {
       activeGeneration += 1;
       if (!element) return;
@@ -329,21 +316,19 @@ function createBrowserAudioDriver(): AudioDriver {
       try {
         element.pause();
       } catch {
-        // Ignore pause quirks during stop.
+        // Ignore stop quirks.
       }
       element.removeAttribute("src");
       try {
         element.load();
       } catch {
-        // Ignore load reset quirks.
+        // Ignore load quirks.
       }
     },
-
     getCurrentTimeSec() {
       if (!element || !Number.isFinite(element.currentTime)) return 0;
       return element.currentTime;
     },
-
     dispose() {
       activeGeneration += 1;
       if (!element) return;
@@ -361,83 +346,41 @@ function createBrowserAudioDriver(): AudioDriver {
       }
       element = null;
     },
-
-    verifyPlayable(url: string): Promise<boolean> {
-      if (typeof Audio === "undefined") {
-        return Promise.resolve(true);
-      }
-      return new Promise((resolve) => {
-        const probe = new Audio();
-        let settled = false;
-        let timeoutId: number | null = null;
-
-        const cleanup = (result: boolean) => {
-          if (settled) return;
-          settled = true;
-          if (timeoutId !== null) {
-            window.clearTimeout(timeoutId);
-            timeoutId = null;
-          }
-          probe.onloadedmetadata = null;
-          probe.oncanplay = null;
-          probe.onerror = null;
-          probe.removeAttribute("src");
-          try {
-            probe.load();
-          } catch {
-            // Ignore probe cleanup errors.
-          }
-          resolve(result);
-        };
-
-        probe.preload = "metadata";
-        probe.onloadedmetadata = () => cleanup(true);
-        probe.oncanplay = () => cleanup(true);
-        probe.onerror = () => cleanup(false);
-        timeoutId = window.setTimeout(() => cleanup(true), 2500);
-        probe.src = url;
-      });
-    },
   };
 }
 
 export interface EpisodeAudioQueueHookResult {
-  snapshot: EpisodeAudioQueueSnapshot | null;
+  snapshot: EpisodeBatchCompilerSnapshot | null;
   hostIdentities: Readonly<Record<string, KuromateIdentityProfileId>>;
-  startPreparation: () => void;
-  cancelPreparation: () => void;
+  startCompilation: () => void;
   startPodcast: () => void;
-  startWithCaptionsAndAvailableAudio: () => void;
-  retryPreparation: () => void;
   play: () => void;
   pause: () => void;
   togglePlayPause: () => void;
   previous: () => void;
   next: () => void;
+  seekToMs: (targetMs: number) => void;
   restart: () => void;
   replay: () => void;
-  retryCurrentSegment: () => void;
-  skipCurrentSegment: () => void;
-  continueWithTimedCaptions: () => void;
-  retryHostedAudio: () => void;
+  retryFailedTurns: () => void;
+  cancel: () => void;
   dispose: () => void;
+  downloadAudio: () => { filename: string } | null;
 }
 
-/** Connects the authoritative episode audio-queue engine across unified preparation and playback with clean lifecycle disposal. */
+/** Connects the authoritative WP-012 Hybrid 4-Turn Batch Compiler across loading, playback, and WAV download. */
 export function useEpisodeAudioQueue(
   episode: Episode | null,
-  options?: { minRequestIntervalMs?: number },
+  options?: { source?: EpisodeSourceKind; minRequestIntervalMs?: number },
 ): EpisodeAudioQueueHookResult {
   const minRequestIntervalMs = options?.minRequestIntervalMs;
+  const source: EpisodeSourceKind = options?.source ?? "generated";
   const [state, setState] = useState<{
     episode: Episode | null;
-    snapshot: EpisodeAudioQueueSnapshot | null;
-  }>(() => ({
-    episode,
-    snapshot: episode ? buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs }) : null,
-  }));
+    snapshot: EpisodeBatchCompilerSnapshot | null;
+  }>({ episode: null, snapshot: null });
 
-  const engineRef = useRef<EpisodeAudioQueueController | null>(null);
+  const engineRef = useRef<EpisodeBatchCompilerController | null>(null);
 
   useEffect(() => {
     if (!episode) {
@@ -445,35 +388,32 @@ export function useEpisodeAudioQueue(
       return;
     }
 
-    const engine = createEpisodeAudioQueueEngine(episode, {
-      fetchSegmentAudio: fetchBrowserSegmentAudio,
-      audioDriver: createBrowserAudioDriver(),
-      minRequestIntervalMs,
+    const compiler = createEpisodeBatchCompiler(episode, {
+      source,
+      fetchSegmentAudio: fetchCompiledBrowserSegmentAudio,
+      audioDriver: createBatchAudioDriver(),
       sessionCircuit: getBrowserTtsSessionCircuit(),
+      minFallbackIntervalMs: minRequestIntervalMs,
     });
-    engineRef.current = engine;
+    engineRef.current = compiler;
 
-    const unsubscribe = engine.subscribe((nextSnapshot) => {
+    const unsubscribe = compiler.subscribe((nextSnapshot) => {
       setState({ episode, snapshot: nextSnapshot });
     });
 
-    engine.startPreparation();
+    compiler.startCompilation();
 
     return () => {
       unsubscribe();
-      engine.dispose();
-      if (engineRef.current === engine) {
+      compiler.dispose();
+      if (engineRef.current === compiler) {
         engineRef.current = null;
       }
     };
-  }, [episode, minRequestIntervalMs]);
+  }, [episode, source, minRequestIntervalMs]);
 
   const snapshot =
-    episode === null
-      ? null
-      : state.episode === episode
-        ? state.snapshot
-        : buildIdleEpisodeSnapshot(episode, { minRequestIntervalMs });
+    episode !== null && state.episode === episode ? state.snapshot : null;
 
   const hostIdentities =
     snapshot?.hostIdentities ??
@@ -481,107 +421,97 @@ export function useEpisodeAudioQueue(
       ? Object.fromEntries(resolveEpisodeVoiceIdentities(episode.hosts).entries())
       : {});
 
-  const cooldownActive = snapshot?.cooldownActive ?? false;
+  const isActiveAudioPlaying =
+    Boolean(snapshot) &&
+    snapshot?.playbackStatus === "playing" &&
+    !snapshot.isSamplePreview;
 
   useEffect(() => {
-    if (!cooldownActive) {
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      engineRef.current?.refreshCooldownDisplay();
-    }, 1000);
-    return () => {
-      window.clearInterval(intervalId);
+    if (!isActiveAudioPlaying) return;
+    let rafId = 0;
+    const tick = () => {
+      engineRef.current?.syncClock();
+      rafId = window.requestAnimationFrame(tick);
     };
-  }, [cooldownActive]);
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [isActiveAudioPlaying]);
 
-  const startPreparation = useCallback(() => {
-    engineRef.current?.startPreparation();
+  const startCompilation = useCallback(() => {
+    engineRef.current?.startCompilation();
   }, []);
-
-  const cancelPreparation = useCallback(() => {
-    engineRef.current?.cancelPreparation();
-  }, []);
-
   const startPodcast = useCallback(() => {
     engineRef.current?.startPodcast();
   }, []);
-
-  const startWithCaptionsAndAvailableAudio = useCallback(() => {
-    engineRef.current?.startWithCaptionsAndAvailableAudio();
-  }, []);
-
-  const retryPreparation = useCallback(() => {
-    engineRef.current?.retryPreparation();
-  }, []);
-
   const play = useCallback(() => {
     engineRef.current?.play();
   }, []);
-
   const pause = useCallback(() => {
     engineRef.current?.pause();
   }, []);
-
   const togglePlayPause = useCallback(() => {
     engineRef.current?.togglePlayPause();
   }, []);
-
   const previous = useCallback(() => {
     engineRef.current?.previous();
   }, []);
-
   const next = useCallback(() => {
     engineRef.current?.next();
   }, []);
-
+  const seekToMs = useCallback((targetMs: number) => {
+    engineRef.current?.seekToMs(targetMs);
+  }, []);
   const restart = useCallback(() => {
     engineRef.current?.restart();
   }, []);
-
   const replay = useCallback(() => {
     engineRef.current?.replay();
   }, []);
-
-  const retryCurrentSegment = useCallback(() => {
-    engineRef.current?.retryCurrentSegment();
+  const retryFailedTurns = useCallback(() => {
+    engineRef.current?.retryFailedTurns();
   }, []);
-
-  const skipCurrentSegment = useCallback(() => {
-    engineRef.current?.skipCurrentSegment();
+  const cancel = useCallback(() => {
+    engineRef.current?.cancel();
   }, []);
-
-  const continueWithTimedCaptions = useCallback(() => {
-    engineRef.current?.continueWithTimedCaptions();
-  }, []);
-
-  const retryHostedAudio = useCallback(() => {
-    engineRef.current?.retryHostedAudio();
-  }, []);
-
   const dispose = useCallback(() => {
     engineRef.current?.dispose();
+  }, []);
+
+  const downloadAudio = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return null;
+    const snap = engine.getSnapshot();
+    const blob = engine.getFullWavBlob();
+    if (!snap.canDownloadAudio || !blob || !snap.fullAudioUrl) {
+      return null;
+    }
+    const link = document.createElement("a");
+    link.href = snap.fullAudioUrl;
+    link.download = snap.downloadFilename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return { filename: snap.downloadFilename };
   }, []);
 
   return {
     snapshot,
     hostIdentities,
-    startPreparation,
-    cancelPreparation,
+    startCompilation,
     startPodcast,
-    startWithCaptionsAndAvailableAudio,
-    retryPreparation,
     play,
     pause,
     togglePlayPause,
     previous,
     next,
+    seekToMs,
     restart,
     replay,
-    retryCurrentSegment,
-    skipCurrentSegment,
-    continueWithTimedCaptions,
-    retryHostedAudio,
+    retryFailedTurns,
+    cancel,
     dispose,
+    downloadAudio,
   };
 }

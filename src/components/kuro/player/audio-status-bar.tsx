@@ -1,128 +1,85 @@
-import type { EpisodeAudioQueueSnapshot } from "@/lib/tts/episode-audio-queue-engine";
+import type { EpisodeBatchCompilerSnapshot } from "@/lib/tts/episode-batch-compiler";
 
 export interface AudioStatusBarProps {
-  snapshot: EpisodeAudioQueueSnapshot;
+  snapshot: EpisodeBatchCompilerSnapshot;
   onResumeAutoplay: () => void;
-  onRetryCurrentSegment: () => void;
-  onSkipCurrentSegment: () => void;
-  onContinueWithTimedCaptions: () => void;
-  onRetryHostedAudio: () => void;
+  onRetryFailedTurns: () => void;
   onBackToForm: () => void;
 }
 
-function resolveStatusPill(snapshot: EpisodeAudioQueueSnapshot): {
+function resolveStatusPill(snapshot: EpisodeBatchCompilerSnapshot): {
   label: string;
   toneClass: string;
 } {
   const hostName = snapshot.activeHost?.name ?? "Kuromate";
-  if (snapshot.audioMode === "timed-fallback") {
+
+  if (snapshot.isSamplePreview) {
     return {
-      label: "Timed captions active",
+      label: "Sample Preview",
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
     };
   }
-  if (snapshot.allHostedDailyExhausted || snapshot.outageState === "quota_exhausted") {
-    return {
-      label: "Hosted voice limit reached",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.outageState !== "none") {
-    return {
-      label: "Hosted voices unavailable",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.status === "autoplay-blocked") {
+  if (snapshot.isAutoplayBlocked) {
     return {
       label: "Tap to continue audio",
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
     };
   }
-  if (snapshot.cooldownActive) {
+  if (snapshot.hasBlockingFailure || snapshot.isConfigBlocked) {
     return {
-      label: "Voice generation is briefly paused",
+      label: "Compilation stopped",
       toneClass: "border-amber-300 bg-amber-50 text-amber-950",
     };
   }
-  if (snapshot.status === "preparing") {
+  if (snapshot.hasRetryableFailure) {
     return {
-      label: `Preparing ${hostName}’s voice`,
+      label: "Retry failed turn",
+      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
+    };
+  }
+  if (snapshot.isBufferingAtBoundary) {
+    return {
+      label: `Preparing turns ${snapshot.bufferingTurnRange ?? "next"}…`,
       toneClass: "border-blue-300 bg-blue-50 text-blue-950",
     };
   }
-  if (snapshot.currentSegmentFailed) {
+  if (snapshot.playbackStatus === "complete") {
     return {
-      label: "Voice unavailable for this turn",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
+      label: snapshot.canDownloadAudio ? "Episode complete · Full WAV ready" : "Episode complete",
+      toneClass: "border-emerald-300 bg-emerald-50 text-emerald-950",
     };
   }
-  if (snapshot.status === "playing") {
-    if (snapshot.isTimedFallbackActive) {
-      return {
-        label: "Timed turn",
-        toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-      };
-    }
+  if (snapshot.playbackStatus === "playing") {
     return {
-      label: snapshot.usedFallbackAudio ? "Alternate hosted voice" : "Hosted audio",
-      toneClass: snapshot.usedFallbackAudio
-        ? "border-blue-300 bg-blue-50 text-blue-950"
-        : "border-emerald-300 bg-emerald-50 text-emerald-950",
+      label: snapshot.isInPadding ? "Listening" : `${hostName} speaking`,
+      toneClass: "border-emerald-300 bg-emerald-50 text-emerald-950",
     };
   }
-  if (snapshot.status === "paused") {
+  if (snapshot.playbackStatus === "paused") {
     return {
       label: "Paused",
       toneClass: "border-slate-300 bg-slate-100 text-slate-900",
     };
   }
-  if (snapshot.status === "complete") {
-    return {
-      label: "Episode complete",
-      toneClass: "border-emerald-300 bg-emerald-50 text-emerald-950",
-    };
-  }
   return {
-    label: snapshot.usedFallbackAudio ? "Alternate hosted voice ready" : "Hosted audio ready",
+    label: snapshot.canDownloadAudio ? "Full WAV ready" : "Batch ready",
     toneClass: "border-slate-300 bg-slate-50 text-slate-800",
   };
 }
 
-/** Concise, accessible audio-sync status strip keeping captions primary at every width. */
+/** Concise, accessible compilation and timeline status bar keeping NO AUDIO, NO ADVANCE explicit. */
 export function AudioStatusBar({
   snapshot,
   onResumeAutoplay,
-  onRetryCurrentSegment,
-  onSkipCurrentSegment,
-  onContinueWithTimedCaptions,
-  onRetryHostedAudio,
+  onRetryFailedTurns,
   onBackToForm,
 }: AudioStatusBarProps) {
   const pill = resolveStatusPill(snapshot);
   const hostName = snapshot.activeHost?.name ?? snapshot.activeSpeakerId;
   const hostRole = snapshot.activeHost?.role ?? "explainer";
-  const hasOutage = snapshot.outageState !== "none";
-  const isDailyLimitOpen = snapshot.allHostedDailyExhausted;
-  const cooldownSecs = snapshot.cooldownActive
-    ? Math.max(1, Math.ceil(snapshot.cooldownRemainingMs / 1000))
-    : 0;
-  const showSingleFailureActions =
-    !hasOutage &&
-    !isDailyLimitOpen &&
-    snapshot.audioMode === "hosted" &&
-    (snapshot.currentSegmentFailed ||
-      snapshot.currentSegmentRetryDisabledReason === "generating" ||
-      snapshot.currentSegmentRetryDisabledReason === "in_flight");
-
-  const showRetryButton =
-    showSingleFailureActions &&
-    snapshot.currentSegmentRetryDisabledReason !== "permanent" &&
-    snapshot.currentSegmentRetryDisabledReason !== "daily_limit" &&
-    (snapshot.currentSegmentManualRetryAllowed ||
-      snapshot.currentSegmentRetryDisabledReason === "generating" ||
-      snapshot.currentSegmentRetryDisabledReason === "in_flight" ||
-      snapshot.currentSegmentRetryDisabledReason === "limit_reached");
+  const showFailureActions =
+    !snapshot.isSamplePreview &&
+    (snapshot.hasRetryableFailure || snapshot.hasBlockingFailure || snapshot.isConfigBlocked);
 
   return (
     <section
@@ -131,29 +88,22 @@ export function AudioStatusBar({
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-extrabold text-slate-950 sm:text-sm">
-            {hostName}
-          </span>
+          <span className="text-xs font-extrabold text-slate-950 sm:text-sm">{hostName}</span>
           <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-800">
             {hostRole}
           </span>
-          <span
-            className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${pill.toneClass}`}
-          >
+          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${pill.toneClass}`}>
             {pill.label}
           </span>
-          {snapshot.cooldownActive ? (
-            <span className="text-[11px] font-semibold tabular-nums text-amber-900">
-              Resuming after cooldown in {cooldownSecs}s.
+          {!snapshot.isSamplePreview ? (
+            <span className="text-[11px] font-semibold tabular-nums text-slate-700">
+              {snapshot.completedTurns} of {snapshot.totalTurns} turns compiled
             </span>
           ) : null}
-          <span className="text-[11px] font-semibold tabular-nums text-slate-700">
-            {snapshot.readyCount} of {snapshot.totalSegments} turns ready
-          </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {snapshot.status === "autoplay-blocked" ? (
+          {snapshot.isAutoplayBlocked ? (
             <button
               type="button"
               onClick={onResumeAutoplay}
@@ -163,49 +113,15 @@ export function AudioStatusBar({
             </button>
           ) : null}
 
-          {showSingleFailureActions ? (
+          {showFailureActions ? (
             <>
-              {showRetryButton ? (
+              {snapshot.hasRetryableFailure || snapshot.isConfigBlocked ? (
                 <button
                   type="button"
-                  disabled={snapshot.currentSegmentManualRetryDisabled}
-                  onClick={onRetryCurrentSegment}
-                  className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:text-white sm:text-sm"
+                  onClick={onRetryFailedTurns}
+                  className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 sm:text-sm"
                 >
-                  {snapshot.currentSegmentRetryLabel}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={onSkipCurrentSegment}
-                className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 sm:text-sm"
-              >
-                Skip audio and continue
-              </button>
-            </>
-          ) : null}
-
-          {hasOutage && snapshot.audioMode === "hosted" ? (
-            <>
-              <button
-                type="button"
-                onClick={onContinueWithTimedCaptions}
-                className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 sm:text-sm"
-              >
-                Continue with timed captions
-              </button>
-              {!isDailyLimitOpen &&
-              snapshot.outageState !== "config_error" &&
-              snapshot.outageState !== "auth_error" ? (
-                <button
-                  type="button"
-                  disabled={snapshot.cooldownActive}
-                  onClick={onRetryHostedAudio}
-                  className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 sm:text-sm"
-                >
-                  {snapshot.cooldownActive
-                    ? `Retry available in ${Math.max(1, Math.ceil(snapshot.cooldownRemainingMs / 1000))}s`
-                    : "Retry hosted audio"}
+                  {snapshot.isConfigBlocked ? "Retry" : "Retry failed turn"}
                 </button>
               ) : null}
               <button
@@ -213,32 +129,16 @@ export function AudioStatusBar({
                 onClick={onBackToForm}
                 className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 sm:text-sm"
               >
-                Return to form
+                Cancel and edit
               </button>
             </>
-          ) : null}
-
-          {snapshot.audioMode === "timed-fallback" &&
-          !isDailyLimitOpen &&
-          snapshot.outageState !== "config_error" &&
-          snapshot.outageState !== "auth_error" ? (
-            <button
-              type="button"
-              disabled={snapshot.cooldownActive}
-              onClick={onRetryHostedAudio}
-              className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55 sm:text-sm"
-            >
-              {snapshot.cooldownActive
-                ? `Retry available in ${Math.max(1, Math.ceil(snapshot.cooldownRemainingMs / 1000))}s`
-                : "Retry hosted audio"}
-            </button>
           ) : null}
         </div>
       </div>
 
-      {snapshot.liveAnnouncement ? (
-        <p role="status" aria-live="polite" className="sr-only">
-          {snapshot.liveAnnouncement}
+      {snapshot.isBufferingAtBoundary ? (
+        <p role="status" aria-live="polite" className="mt-1.5 text-xs font-medium text-blue-950">
+          Paused cleanly at the batch boundary while preparing turns {snapshot.bufferingTurnRange}…
         </p>
       ) : null}
     </section>
