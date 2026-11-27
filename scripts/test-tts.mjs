@@ -95,7 +95,11 @@ const {
   resolveKuromateSynthesisProfile,
   resolveKuromateVoiceProfile,
 } = await import("../src/lib/tts/voice-profiles.ts");
-const { buildPcm16MonoWav } = await import("../src/lib/tts/deepgram-tts-client.ts");
+const {
+  ALLOWED_DEEPGRAM_VOICES,
+  buildPcm16MonoWav,
+  isAllowedDeepgramVoice,
+} = await import("../src/lib/tts/deepgram-tts-client.ts");
 
 let passed = 0;
 function check(condition, label) {
@@ -1291,7 +1295,9 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
         lower.includes(PRIMARY_GEMINI_TTS_MODEL) ||
         lower.includes(LITE_GEMINI_TTS_MODEL) ||
         lower.includes("gemini_api_key") ||
+        lower.includes("deepgram_api_key") ||
         lower.includes("@google/genai") ||
+        lower.includes("aura-2-") ||
         prebuiltVoices.some((voiceName) => new RegExp(`\\b${voiceName}\\b`, "i").test(lower))
       );
     });
@@ -1322,21 +1328,76 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
     );
 
     check(
-      mayaVoices.every((p) => p.identityProfileId === "kuromate_maya_v1" && p.voice === "Sulafat" && p.fallbackVoice === "Sulafat") &&
+      mayaVoices.every(
+        (p) =>
+          p.identityProfileId === "kuromate_maya_v1" &&
+          p.deepgramVoice === "aura-2-thalia-en" &&
+          p.voice === "Sulafat" &&
+          p.fallbackVoice === "Sulafat",
+      ) &&
         mayaVoices[0].profileId === "kuromate_explainer_v1" &&
         mayaVoices[1].profileId === "kuromate_learner_v1" &&
         mayaVoices[1].styleInstruction !== mayaVoices[0].styleInstruction,
-      "[ID 01] Maya always retains Sulafat across explainer/learner/moderator roles while role changes delivery style",
+      "[ID 01] Maya always retains aura-2-thalia-en & Sulafat across explainer/learner/moderator roles while role changes delivery style",
     );
     check(
-      leoVoices.every((p) => p.identityProfileId === "kuromate_leo_v1" && p.voice === "Puck" && p.fallbackVoice === "Puck") &&
-        leoVoices[1].profileId === "kuromate_explainer_v1",
-      "[ID 02] Leo always retains Puck even when assigned Explainer role",
+      leoVoices.every(
+        (p) =>
+          p.identityProfileId === "kuromate_leo_v1" &&
+          p.deepgramVoice === "aura-2-aries-en" &&
+          p.voice === "Puck" &&
+          p.fallbackVoice === "Puck",
+      ) &&
+        leoVoices[1].profileId === "kuromate_explainer_v1" &&
+        leoVoices[2].profileId === "kuromate_skeptic_v1",
+      "[ID 02] Leo always retains aura-2-aries-en & Puck across learner/explainer/skeptic roles",
     );
     check(
-      samVoices.every((p) => p.identityProfileId === "kuromate_sam_v1" && p.voice === "Kore" && p.fallbackVoice === "Kore") &&
+      samVoices.every(
+        (p) =>
+          p.identityProfileId === "kuromate_sam_v1" &&
+          p.deepgramVoice === "aura-2-orion-en" &&
+          p.voice === "Kore" &&
+          p.fallbackVoice === "Kore",
+      ) &&
         samVoices[2].profileId === "kuromate_explainer_v1",
-      "[ID 03] Sam always retains Kore across Skeptic/Learner/Explainer roles",
+      "[ID 03] Sam always retains aura-2-orion-en & Kore across skeptic/learner/explainer roles",
+    );
+
+    const guest1 = resolveKuromateIdentityProfile({
+      voiceIdentityId: "kuromate_guest_01_v1",
+      speakerId: "host_g1",
+      hostName: "Priya",
+      role: "storyteller",
+    });
+    const guest2 = resolveKuromateIdentityProfile({
+      voiceIdentityId: "kuromate_guest_02_v1",
+      speakerId: "host_g2",
+      hostName: "Mateo",
+      role: "specialist",
+    });
+    const guest3 = resolveKuromateIdentityProfile({
+      voiceIdentityId: "kuromate_guest_03_v1",
+      speakerId: "host_g3",
+      hostName: "Hana",
+      role: "moderator",
+    });
+    const guest1SwappedRole = resolveKuromateSynthesisProfile({
+      voiceIdentityId: "kuromate_guest_01_v1",
+      speakerId: "host_g1",
+      hostName: "Priya",
+      role: "skeptic",
+    });
+    check(
+      isAllowedDeepgramVoice("aura-2-aries-en") &&
+        !isAllowedDeepgramVoice("aura-2-apollo-en") &&
+        ALLOWED_DEEPGRAM_VOICES.length === 6 &&
+        guest1.deepgramVoice === "aura-2-athena-en" &&
+        guest2.deepgramVoice === "aura-2-arcas-en" &&
+        guest3.deepgramVoice === "aura-2-luna-en" &&
+        guest1SwappedRole.deepgramVoice === "aura-2-athena-en" &&
+        guest1SwappedRole.profileId === "kuromate_skeptic_v1",
+      "[ID 03b] Deepgram allowlist removes apollo, maps Aries for Leo, and locks Guest 1-3 identities across roles",
     );
   }
 
@@ -1514,6 +1575,74 @@ const FLASH_LITE_C2PA_WAV_B64 = makeSyntheticC2paWavBase64({ durationMs: 1400 })
         role: "skeptic",
       }).approvedVoice === "Sulafat",
       "[ID 11] Direct resolveKuromateIdentityProfile respects Maya regardless of skeptic role",
+    );
+
+    // ID-12: Deepgram route handler locks Leo=Aries (explainer) & Maya=Thalia (learner), and safely handles unknown identity
+    const dgCaptured = [];
+    const dgEnv = {
+      KURO_TTS_PROVIDER: "deepgram",
+      DEEPGRAM_API_KEY: "test-deepgram-key",
+      GEMINI_API_KEY: "test-gemini-key",
+    };
+    const dgPcm = Buffer.alloc(24_000 * 2);
+    const resLeoExp = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_swap_1",
+        speakerId: "host_01",
+        role: "explainer",
+        voiceIdentityId: "kuromate_leo_v1",
+        hostName: "Leo",
+        text: "Leo leading as explainer on Deepgram.",
+      }),
+      {
+        env: dgEnv,
+        deepgramTransport: async (call) => {
+          dgCaptured.push(call.voice);
+          return { bytes: buildPcm16MonoWav(dgPcm), mimeType: "audio/wav" };
+        },
+      },
+    );
+    const resMayaLrn = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_swap_2",
+        speakerId: "host_02",
+        role: "learner",
+        voiceIdentityId: "kuromate_maya_v1",
+        hostName: "Maya",
+        text: "Maya asking follow-up as learner on Deepgram.",
+      }),
+      {
+        env: dgEnv,
+        deepgramTransport: async (call) => {
+          dgCaptured.push(call.voice);
+          return { bytes: buildPcm16MonoWav(dgPcm), mimeType: "audio/wav" };
+        },
+      },
+    );
+    const resBadUnknownId = await handleTtsPost(
+      makeJsonRequest({
+        segmentId: "seg_swap_3",
+        speakerId: "host_x",
+        role: "explainer",
+        voiceIdentityId: "kuromate_unknown_v99",
+        text: "Invalid identity ID must fail cleanly.",
+      }),
+      {
+        env: dgEnv,
+        deepgramTransport: async () => {
+          throw new Error("Should not call provider for invalid identity ID");
+        },
+      },
+    );
+    check(
+      resLeoExp.status === 200 &&
+        resMayaLrn.status === 200 &&
+        dgCaptured[0] === "aura-2-aries-en" &&
+        dgCaptured[1] === "aura-2-thalia-en" &&
+        resLeoExp.headers.get("X-Kuro-TTS-Identity") === "kuromate_leo_v1" &&
+        resMayaLrn.headers.get("X-Kuro-TTS-Identity") === "kuromate_maya_v1" &&
+        resBadUnknownId.status === 400,
+      "[ID 12] Deepgram primary assigns aura-2-aries-en to Leo(explainer) & aura-2-thalia-en to Maya(learner) and rejects unknown identity IDs",
     );
   }
 }

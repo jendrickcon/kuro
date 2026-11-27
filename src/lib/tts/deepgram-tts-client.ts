@@ -9,7 +9,7 @@ export const DEEPGRAM_TTS_SAMPLE_RATE_HZ = 24_000;
 /** Server-side allowlist of hosted voices; the browser can never select one. */
 export const ALLOWED_DEEPGRAM_VOICES = [
   "aura-2-thalia-en",
-  "aura-2-apollo-en",
+  "aura-2-aries-en",
   "aura-2-orion-en",
   "aura-2-athena-en",
   "aura-2-arcas-en",

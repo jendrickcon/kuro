@@ -1,4 +1,5 @@
 import type { HostRole } from "@contracts/episode.schema";
+import type { AllowedDeepgramVoice } from "@/lib/tts/deepgram-tts-client";
 import {
   resolveCanonicalIdentityId,
   resolveDeterministicUnknownIdentityId,
@@ -20,6 +21,7 @@ export type AllowedPrebuiltVoice = (typeof ALLOWED_PREBUILT_VOICES)[number];
 export interface KuromateIdentityProfile {
   readonly identityProfileId: KuromateIdentityProfileId;
   readonly canonicalKuromate: "maya" | "leo" | "sam" | null;
+  readonly deepgramVoice: AllowedDeepgramVoice;
   readonly approvedVoice: AllowedPrebuiltVoice;
   readonly fallbackVoice: AllowedPrebuiltVoice;
 }
@@ -31,36 +33,42 @@ export const KUROMATE_IDENTITY_PROFILES: Readonly<
   kuromate_maya_v1: Object.freeze({
     identityProfileId: "kuromate_maya_v1",
     canonicalKuromate: "maya",
+    deepgramVoice: "aura-2-thalia-en",
     approvedVoice: "Sulafat",
     fallbackVoice: "Sulafat",
   }),
   kuromate_leo_v1: Object.freeze({
     identityProfileId: "kuromate_leo_v1",
     canonicalKuromate: "leo",
+    deepgramVoice: "aura-2-aries-en",
     approvedVoice: "Puck",
     fallbackVoice: "Puck",
   }),
   kuromate_sam_v1: Object.freeze({
     identityProfileId: "kuromate_sam_v1",
     canonicalKuromate: "sam",
+    deepgramVoice: "aura-2-orion-en",
     approvedVoice: "Kore",
     fallbackVoice: "Kore",
   }),
   kuromate_guest_01_v1: Object.freeze({
     identityProfileId: "kuromate_guest_01_v1",
     canonicalKuromate: null,
+    deepgramVoice: "aura-2-athena-en",
     approvedVoice: "Achird",
     fallbackVoice: "Achird",
   }),
   kuromate_guest_02_v1: Object.freeze({
     identityProfileId: "kuromate_guest_02_v1",
     canonicalKuromate: null,
+    deepgramVoice: "aura-2-arcas-en",
     approvedVoice: "Sadaltager",
     fallbackVoice: "Sadaltager",
   }),
   kuromate_guest_03_v1: Object.freeze({
     identityProfileId: "kuromate_guest_03_v1",
     canonicalKuromate: null,
+    deepgramVoice: "aura-2-luna-en",
     approvedVoice: "Erinome",
     fallbackVoice: "Erinome",
   }),
