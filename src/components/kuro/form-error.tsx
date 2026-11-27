@@ -8,7 +8,7 @@ export function FieldError({ id, message }: { id: string; message: string | null
     <p
       id={id}
       role="alert"
-      className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-900"
+      className="mt-2 rounded-lg border border-[var(--kuro-danger-border)] bg-[var(--kuro-danger-bg)] px-3 py-2 text-sm font-medium text-[var(--kuro-danger-ink)]"
     >
       {message}
     </p>
@@ -37,16 +37,17 @@ export function RecoverableErrorCard({
       ref={containerRef}
       tabIndex={-1}
       role="alert"
-      className="rounded-xl border-2 border-red-300 bg-red-50 p-4 text-red-950 focus:outline-none"
+      data-kuro-recovery-slot="form-error"
+      className="rounded-2xl border-2 border-[var(--kuro-danger-border)] bg-[var(--kuro-danger-bg)] p-4 text-[var(--kuro-danger-ink)] focus:outline-none"
     >
-      <p className="text-sm font-bold">Could not create conversation</p>
-      <p className="mt-1 text-sm text-red-900">{message}</p>
+      <p className="font-display text-sm font-extrabold">Could not create conversation</p>
+      <p className="mt-1 text-sm">{message}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {retryable ? (
           <button
             type="button"
             onClick={onRetry}
-            className="min-h-11 rounded-lg bg-red-800 px-4 py-2 text-sm font-semibold text-white hover:bg-red-900"
+            className="kuro-interactive min-h-11 rounded-xl bg-[var(--kuro-danger-ink)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
           >
             Try again
           </button>
@@ -54,17 +55,17 @@ export function RecoverableErrorCard({
         <button
           type="button"
           onClick={onEdit}
-          className="min-h-11 rounded-lg border border-red-400 bg-white px-4 py-2 text-sm font-semibold text-red-950 hover:bg-red-100"
+          className="kuro-interactive min-h-11 rounded-xl border border-[var(--kuro-danger-border)] bg-[var(--kuro-surface)] px-4 py-2 text-sm font-semibold text-[var(--kuro-danger-ink)] hover:bg-[var(--kuro-surface-muted)]"
         >
-          Edit input
+          Edit notes
         </button>
         {onTrySample ? (
           <button
             type="button"
             onClick={onTrySample}
-            className="min-h-11 rounded-lg border border-red-400 bg-white px-4 py-2 text-sm font-semibold text-red-950 hover:bg-red-100"
+            className="kuro-interactive min-h-11 rounded-xl border border-[var(--kuro-danger-border)] bg-[var(--kuro-surface)] px-4 py-2 text-sm font-semibold text-[var(--kuro-danger-ink)] hover:bg-[var(--kuro-surface-muted)]"
           >
-            Try sample episode
+            Try a sample episode
           </button>
         ) : null}
       </div>

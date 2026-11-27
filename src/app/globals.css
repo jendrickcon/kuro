@@ -1,53 +1,203 @@
 @import "tailwindcss";
 
+@theme inline {
+  --font-display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
 :root {
   color-scheme: light;
+
+  /* Warm Broadcast Studio — WP-012.5 baseline tokens (modular for WP-013 replacement) */
+  --kuro-bg: oklch(0.974 0.009 78);
+  --kuro-surface: oklch(0.996 0.004 78);
+  --kuro-surface-muted: oklch(0.946 0.012 75);
+  --kuro-ink: oklch(0.205 0.018 52);
+  --kuro-ink-muted: oklch(0.45 0.017 56);
+  --kuro-border: oklch(0.868 0.014 72);
+  --kuro-border-strong: oklch(0.69 0.018 65);
+
+  /* Dark broadcast stage & theater backdrop */
+  --kuro-studio-bg: oklch(0.185 0.018 50);
+  --kuro-studio-surface: oklch(0.235 0.02 52);
+  --kuro-studio-surface-hi: oklch(0.29 0.021 54);
+  --kuro-studio-ink: oklch(0.962 0.008 75);
+  --kuro-studio-ink-muted: oklch(0.785 0.015 70);
+  --kuro-studio-border: oklch(0.38 0.018 56);
+
+  /* Warm terracotta-vermilion broadcast signal (contrast >= 5:1 on white) */
+  --kuro-accent: oklch(0.505 0.168 33);
+  --kuro-accent-hover: oklch(0.435 0.168 33);
+  --kuro-accent-soft: oklch(0.948 0.028 40);
+  --kuro-accent-ink: oklch(0.365 0.132 33);
+  --kuro-on-air: oklch(0.545 0.202 27);
+
+  /* Semantic state tokens */
+  --kuro-ready-bg: oklch(0.945 0.036 154);
+  --kuro-ready-border: oklch(0.74 0.095 154);
+  --kuro-ready-ink: oklch(0.32 0.095 154);
+
+  --kuro-warn-bg: oklch(0.955 0.044 82);
+  --kuro-warn-border: oklch(0.77 0.115 78);
+  --kuro-warn-ink: oklch(0.36 0.095 66);
+
+  --kuro-danger-bg: oklch(0.952 0.032 25);
+  --kuro-danger-border: oklch(0.74 0.125 25);
+  --kuro-danger-ink: oklch(0.38 0.145 25);
+
+  --kuro-focus-ring: oklch(0.51 0.17 33);
+
+  /* Concentric radii & spacing rhythm */
+  --kuro-radius-sm: 8px;
+  --kuro-radius-md: 12px;
+  --kuro-radius-lg: 16px;
+  --kuro-radius-xl: 20px;
+
+  /* Motion system tokens (transform/opacity/color only — never universal property wildcard) */
+  --kuro-duration-press: 90ms;
+  --kuro-duration-fast: 160ms;
+  --kuro-duration-base: 240ms;
+  --kuro-duration-shot: 280ms;
+  --kuro-duration-beat: 420ms;
+  --kuro-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --kuro-ease-settle: cubic-bezier(0.2, 0, 0, 1);
 }
 
 body {
-  background-color: #f4f7fb;
-  color: #0f172a;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: var(--kuro-bg);
+  color: var(--kuro-ink);
+  font-family: var(--font-sans);
   line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+p,
+.text-pretty-kuro {
+  text-wrap: pretty;
+}
+
+.font-mono-kuro {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 :focus-visible {
-  outline: 2px solid #1d4ed8;
+  outline: 2.5px solid var(--kuro-focus-ring);
   outline-offset: 2px;
 }
 
-/* Studio theme tokens (extensible via data-stage-theme without changing markup) */
+.kuro-interactive {
+  transition-property: transform, background-color, border-color, color, opacity;
+  transition-duration: var(--kuro-duration-fast);
+  transition-timing-function: var(--kuro-ease-out);
+}
+
+.kuro-interactive:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.kuro-card {
+  background-color: var(--kuro-surface);
+  border: 1px solid var(--kuro-border);
+  border-radius: var(--kuro-radius-xl);
+  box-shadow: 0 1px 2px oklch(0.2 0.02 52 / 0.05), 0 8px 24px -16px oklch(0.2 0.02 52 / 0.12);
+}
+
+/* Broadcast Preparation stage (Screen 3 — single unified panel choreography) */
+.kuro-broadcast-opening {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--kuro-radius-lg);
+  border: 1px solid var(--kuro-studio-border);
+  background: linear-gradient(
+    180deg,
+    var(--kuro-studio-bg) 0%,
+    var(--kuro-studio-surface) 64%,
+    oklch(0.205 0.022 46) 100%
+  );
+  color: var(--kuro-studio-ink);
+}
+
+.kuro-broadcast-keylight {
+  position: absolute;
+  inset: -10% 10% auto 10%;
+  height: 75%;
+  pointer-events: none;
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at 50% 25%,
+    oklch(0.68 0.14 48 / 0.24) 0%,
+    oklch(0.55 0.11 35 / 0.09) 48%,
+    transparent 74%
+  );
+  opacity: 0.35;
+  transform: scale(0.92);
+  transition-property: opacity, transform;
+  transition-duration: var(--kuro-duration-beat);
+  transition-timing-function: var(--kuro-ease-out);
+}
+
+.kuro-broadcast-opening[data-beat-phase="active"] .kuro-broadcast-keylight,
+.kuro-broadcast-opening[data-beat-phase="ready"] .kuro-broadcast-keylight {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.kuro-broadcast-ident {
+  animation: kuro-ident-enter var(--kuro-duration-beat) var(--kuro-ease-out) 1 both;
+}
+
+.kuro-broadcast-holding-bar {
+  animation: kuro-standby-breathe 2.4s ease-in-out infinite;
+}
+
+.kuro-broadcast-opening[data-intro-skipped="true"] .kuro-broadcast-ident,
+.kuro-broadcast-opening[data-intro-skipped="true"] .kuro-broadcast-holding-bar,
+.kuro-broadcast-opening[data-intro-skipped="true"] .kuro-silhouette-chip {
+  animation: none;
+}
+
+/* Portrait Studio Stage & Theater Surface (Screen 4) */
 .kuro-studio-stage[data-stage-theme="contemporary"] {
-  --studio-wall-top: #0b1324;
-  --studio-wall-mid: #162447;
-  --studio-wall-bottom: #0f172a;
-  --studio-desk-top: #475569;
-  --studio-desk-bottom: #1e293b;
-  --studio-desk-rim: #94a3b8;
+  --studio-wall-top: oklch(0.165 0.017 50);
+  --studio-wall-mid: oklch(0.225 0.022 52);
+  --studio-wall-bottom: oklch(0.18 0.018 48);
+  --studio-desk-top: oklch(0.36 0.018 55);
+  --studio-desk-bottom: oklch(0.21 0.016 50);
+  --studio-desk-rim: oklch(0.64 0.024 62);
   background: linear-gradient(
     180deg,
     var(--studio-wall-top) 0%,
-    var(--studio-wall-mid) 68%,
+    var(--studio-wall-mid) 62%,
     var(--studio-wall-bottom) 100%
   );
 }
 
 .kuro-studio-slats {
   position: absolute;
-  top: 42px;
-  width: 14%;
-  height: 150px;
-  border-radius: 8px;
+  top: 40px;
+  width: 11%;
+  height: 44%;
+  border-radius: var(--kuro-radius-sm);
   pointer-events: none;
-  opacity: 0.45;
+  opacity: 0.38;
   background: repeating-linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.05) 0px,
-    rgba(255, 255, 255, 0.05) 5px,
-    transparent 5px,
-    transparent 11px
+    oklch(0.95 0.01 75 / 0.06) 0px,
+    oklch(0.95 0.01 75 / 0.06) 4px,
+    transparent 4px,
+    transparent 10px
   );
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid oklch(0.95 0.01 75 / 0.12);
 }
 
 .kuro-studio-slats--left {
@@ -58,30 +208,67 @@ body {
   right: 2.5%;
 }
 
-/* Shared curved podcast desk & nameplate bay */
 .kuro-shared-desk-rim {
-  height: 16px;
-  margin: -6px -2% 0;
-  border-radius: 50% 50% 0 0 / 14px 14px 0 0;
+  height: 12px;
+  margin: -5px -2% 0;
+  border-radius: 50% 50% 0 0 / 12px 12px 0 0;
   background: linear-gradient(180deg, var(--studio-desk-top) 0%, var(--studio-desk-bottom) 100%);
-  border-top: 2.5px solid var(--studio-desk-rim);
+  border-top: 2px solid var(--studio-desk-rim);
 }
 
 .kuro-nameplate-row {
-  background-color: #0b1222;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background-color: oklch(0.155 0.015 48);
+  border-top: 1px solid oklch(0.95 0.01 75 / 0.12);
 }
 
-/* Embodied geometric Kuromates — larger and closer, zero enclosing halo */
+/* Portrait safe-zone frame: desktop constrains aspect cleanly, mobile fills width without overflow */
+.kuro-portrait-frame {
+  width: 100%;
+  max-width: 430px;
+  margin-inline: auto;
+  border-radius: var(--kuro-radius-xl);
+  border: 1.5px solid var(--kuro-studio-border);
+  background-color: var(--kuro-studio-bg);
+  color: var(--kuro-studio-ink);
+  overflow: hidden;
+  box-shadow: 0 20px 48px -20px oklch(0.14 0.02 48 / 0.45);
+}
+
+.kuro-stage-visual-zone,
+.kuro-stage-hosts-zone {
+  transition-property: transform, opacity;
+  transition-duration: var(--kuro-duration-shot);
+  transition-timing-function: var(--kuro-ease-out);
+}
+
+/* Editorial camera compositions */
+.kuro-studio-stage[data-editorial-shot="visual-explanation"] .kuro-stage-visual-zone {
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.kuro-studio-stage[data-editorial-shot="visual-explanation"] .kuro-stage-hosts-zone {
+  justify-content: flex-end;
+  padding-right: 0.75rem;
+}
+
+.kuro-studio-stage[data-editorial-shot="speaker-closeup"] .kuromate-seat {
+  transform: scale(1.06);
+}
+
+.kuro-studio-stage[data-editorial-shot="reaction-shot"] .kuromate-seat[data-state="reacting"] {
+  transform: scale(1.04);
+}
+
+/* Embodied geometric provisional Kuromates (WP-013 replacement slot) */
 .kuromate-seat {
-  --kuromate-accent: #2563eb;
-  --kuromate-head-w: 54px;
-  --kuromate-head-h: 44px;
-  --kuromate-torso-wrap-w: 68px;
-  --kuromate-torso-wrap-h: 36px;
-  --kuromate-torso-w: 46px;
-  --kuromate-torso-h: 34px;
-  --kuromate-seat-w: 110px;
+  --kuromate-accent: #c2552b;
+  --kuromate-head-w: 50px;
+  --kuromate-head-h: 42px;
+  --kuromate-torso-wrap-w: 62px;
+  --kuromate-torso-wrap-h: 34px;
+  --kuromate-torso-w: 44px;
+  --kuromate-torso-h: 30px;
+  --kuromate-seat-w: 96px;
   position: relative;
   width: var(--kuromate-seat-w);
   flex: 0 1 auto;
@@ -89,32 +276,54 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  padding-top: 8px;
-  transition: transform 200ms ease, opacity 200ms ease;
+  padding-top: 6px;
+  transition-property: transform, opacity;
+  transition-duration: var(--kuro-duration-base);
+  transition-timing-function: var(--kuro-ease-out);
 }
 
+.kuromate-seat[data-size-variant="closeup"] {
+  --kuromate-head-w: 64px;
+  --kuromate-head-h: 52px;
+  --kuromate-torso-wrap-w: 78px;
+  --kuromate-torso-wrap-h: 42px;
+  --kuromate-torso-w: 56px;
+  --kuromate-torso-h: 38px;
+  --kuromate-seat-w: 126px;
+}
+
+.kuromate-seat[data-size-variant="compact"],
 .kuromate-seat[data-host-count="3"] {
-  --kuromate-head-w: 46px;
-  --kuromate-head-h: 38px;
-  --kuromate-torso-wrap-w: 58px;
-  --kuromate-torso-wrap-h: 32px;
+  --kuromate-head-w: 42px;
+  --kuromate-head-h: 34px;
+  --kuromate-torso-wrap-w: 52px;
+  --kuromate-torso-wrap-h: 28px;
+  --kuromate-torso-w: 36px;
+  --kuromate-torso-h: 25px;
+  --kuromate-seat-w: 80px;
+}
+
+.kuromate-seat[data-size-variant="docked"] {
+  --kuromate-head-w: 44px;
+  --kuromate-head-h: 36px;
+  --kuromate-torso-wrap-w: 54px;
+  --kuromate-torso-wrap-h: 29px;
   --kuromate-torso-w: 38px;
-  --kuromate-torso-h: 30px;
-  --kuromate-seat-w: 88px;
+  --kuromate-torso-h: 26px;
+  --kuromate-seat-w: 84px;
 }
 
 .kuromate-seat--center-trio {
-  transform: translateY(-8px);
+  transform: translateY(-6px);
 }
 
-/* Soft studio spotlight on back wall behind active speaker (not an enclosing halo) */
 .kuromate-stage-light {
   position: absolute;
-  top: -12px;
+  top: -10px;
   left: 50%;
   transform: translateX(-50%);
-  width: 120%;
-  height: 115%;
+  width: 118%;
+  height: 112%;
   pointer-events: none;
   opacity: 0;
   background: radial-gradient(
@@ -123,7 +332,9 @@ body {
     rgba(255, 255, 255, 0.08) 42%,
     transparent 74%
   );
-  transition: opacity 200ms ease;
+  transition-property: opacity;
+  transition-duration: var(--kuro-duration-base);
+  transition-timing-function: var(--kuro-ease-out);
 }
 
 .kuromate-seat[data-state="speaking"] .kuromate-stage-light {
@@ -131,7 +342,7 @@ body {
 }
 
 .kuromate-seat[data-state="paused"] .kuromate-stage-light {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 .kuromate-seat[data-state="captioning"] .kuromate-stage-light {
@@ -144,7 +355,7 @@ body {
 }
 
 .kuromate-seat[data-state="listening"] {
-  opacity: 0.9;
+  opacity: 0.88;
 }
 
 .kuromate-body {
@@ -154,11 +365,12 @@ body {
   flex-direction: column;
   align-items: center;
   transform-origin: bottom center;
-  animation: kuromate-breathe 3.6s ease-in-out infinite;
-  transition: transform 200ms ease;
+  animation: kuromate-breathe 3.8s ease-in-out infinite;
+  transition-property: transform;
+  transition-duration: var(--kuro-duration-base);
+  transition-timing-function: var(--kuro-ease-out);
 }
 
-/* Forward conversational lean when speaking */
 .kuromate-seat[data-state="speaking"] .kuromate-body {
   animation: kuromate-talk-lean 540ms ease-in-out infinite alternate;
 }
@@ -172,11 +384,11 @@ body {
 }
 
 .kuromate-seat[data-state="paused"] .kuromate-body,
-.kuromate-seat[data-state="complete"] .kuromate-body {
+.kuromate-seat[data-state="complete"] .kuromate-body,
+.kuromate-seat[data-state="idle"] .kuromate-body {
   animation: none;
 }
 
-/* Conversational facing offsets */
 .kuromate-seat[data-seat="left"][data-look="right"] .kuromate-eyes,
 .kuromate-seat[data-state="speaking"][data-seat="left"] .kuromate-eyes {
   transform: translateX(2px);
@@ -195,15 +407,14 @@ body {
   transform: rotate(3deg);
 }
 
-/* Geometric role crests */
 .kuromate-crest {
   position: relative;
-  height: 12px;
-  width: 36px;
+  height: 11px;
+  width: 34px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
   margin-bottom: -1px;
 }
 
@@ -216,8 +427,8 @@ body {
 
 .kuromate-seat[data-role="explainer"] .kuromate-crest-a {
   display: block;
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 3px;
   transform: rotate(45deg);
 }
@@ -226,19 +437,19 @@ body {
 .kuromate-seat[data-role="learner"] .kuromate-crest-b {
   display: block;
   width: 5px;
-  height: 11px;
+  height: 10px;
   border-radius: 999px;
 }
 
 .kuromate-seat[data-role="learner"] .kuromate-crest-b {
-  height: 8px;
+  height: 7px;
 }
 
 .kuromate-seat[data-role="skeptic"] .kuromate-crest-a,
 .kuromate-seat[data-role="skeptic"] .kuromate-crest-b {
   display: block;
-  width: 8px;
-  height: 9px;
+  width: 7px;
+  height: 8px;
   border-radius: 2px 6px 2px 2px;
   transform: skewX(-14deg);
 }
@@ -251,7 +462,7 @@ body {
 .kuromate-seat[data-role="storyteller"] .kuromate-crest-a,
 .kuromate-seat[data-role="storyteller"] .kuromate-crest-b {
   display: block;
-  width: 14px;
+  width: 13px;
   height: 6px;
   border-radius: 999px 999px 0 0;
 }
@@ -264,20 +475,19 @@ body {
 
 .kuromate-seat[data-role="specialist"] .kuromate-crest-a {
   display: block;
-  width: 16px;
-  height: 8px;
+  width: 15px;
+  height: 7px;
   border-radius: 4px;
 }
 
 .kuromate-seat[data-role="moderator"] .kuromate-crest-a,
 .kuromate-seat[data-role="moderator"] .kuromate-crest-b {
   display: block;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
 }
 
-/* Head, eyes, speech-wave mouth */
 .kuromate-head {
   position: relative;
   z-index: 3;
@@ -285,14 +495,16 @@ body {
   height: var(--kuromate-head-h);
   border-radius: 48% 48% 42% 42%;
   background-color: var(--kuromate-accent);
-  border: 2.5px solid #f8fafc;
+  border: 2px solid #f8fafc;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   overflow: hidden;
-  transition: transform 200ms ease;
+  transition-property: transform, border-color;
+  transition-duration: var(--kuro-duration-base);
+  transition-timing-function: var(--kuro-ease-out);
 }
 
 .kuromate-seat[data-state="speaking"] .kuromate-head {
@@ -307,7 +519,7 @@ body {
   width: 65%;
   height: 55%;
   border-radius: 999px;
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.22);
   pointer-events: none;
 }
 
@@ -317,8 +529,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  transition: transform 180ms ease;
+  gap: 11px;
+  transition-property: transform;
+  transition-duration: var(--kuro-duration-fast);
+  transition-timing-function: var(--kuro-ease-out);
 }
 
 .kuromate-eye {
@@ -349,11 +563,11 @@ body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  height: 11px;
+  height: 10px;
 }
 
 .kuromate-wave-bar {
-  width: 4px;
+  width: 3.5px;
   height: 3.5px;
   border-radius: 999px;
   background-color: #0f172a;
@@ -376,7 +590,6 @@ body {
   animation: none;
 }
 
-/* Sculpted torso, arms, hands, lower silhouette */
 .kuromate-torso-wrap {
   position: relative;
   width: var(--kuromate-torso-wrap-w);
@@ -392,27 +605,27 @@ body {
   z-index: 2;
   width: var(--kuromate-torso-w);
   height: var(--kuromate-torso-h);
-  border-radius: 18px 18px 8px 8px;
+  border-radius: 16px 16px 8px 8px;
   background: linear-gradient(180deg, var(--kuromate-accent) 0%, #0f172a 185%);
-  border: 2.5px solid #f8fafc;
+  border: 2px solid #f8fafc;
   border-bottom: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 5px;
+  padding-top: 4px;
 }
 
 .kuromate-collar {
-  width: 55%;
-  height: 4px;
+  width: 54%;
+  height: 3.5px;
   border-radius: 999px;
   background-color: rgba(255, 255, 255, 0.55);
 }
 
 .kuromate-badge {
-  margin-top: 5px;
-  width: 11px;
-  height: 11px;
+  margin-top: 4px;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   background-color: #f8fafc;
   opacity: 0.85;
@@ -421,8 +634,8 @@ body {
 .kuromate-arm {
   position: absolute;
   top: 4px;
-  width: 11px;
-  height: 24px;
+  width: 10px;
+  height: 22px;
   border-radius: 999px;
   background-color: var(--kuromate-accent);
   border: 2px solid #f8fafc;
@@ -444,8 +657,8 @@ body {
   bottom: -4px;
   left: 50%;
   transform: translateX(-50%);
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background-color: #f8fafc;
   border: 1.5px solid #0f172a;
@@ -465,20 +678,19 @@ body {
 }
 
 .kuromate-lower {
-  width: calc(var(--kuromate-torso-w) + 8px);
-  height: 12px;
+  width: calc(var(--kuromate-torso-w) + 6px);
+  height: 10px;
   margin-top: -2px;
-  border-radius: 12px 12px 0 0;
+  border-radius: 10px 10px 0 0;
   background-color: #1e293b;
   border: 2px solid rgba(248, 250, 252, 0.72);
   border-bottom: 0;
 }
 
-/* Studio microphone paired directly beside each Kuromate */
 .kuromate-mic {
   position: absolute;
   bottom: 0;
-  right: 6%;
+  right: 5%;
   z-index: 4;
   display: flex;
   flex-direction: column;
@@ -488,13 +700,13 @@ body {
 
 .kuromate-seat[data-seat="right"] .kuromate-mic {
   right: auto;
-  left: 6%;
+  left: 5%;
 }
 
 .kuromate-mic-head {
-  width: 13px;
-  height: 18px;
-  border-radius: 7px;
+  width: 12px;
+  height: 16px;
+  border-radius: 6px;
   background-color: #1e293b;
   border: 1.5px solid #cbd5e1;
   display: flex;
@@ -503,17 +715,17 @@ body {
 }
 
 .kuromate-mic-led {
-  width: 6px;
-  height: 6px;
+  width: 5.5px;
+  height: 5.5px;
   border-radius: 999px;
   background-color: #64748b;
 }
 
-.kuromate-seat[data-state="speaking"] .kuromate-mic-head {
+.kuromate-seat[data-audio-owner="true"][data-state="speaking"] .kuromate-mic-head {
   border-color: #86efac;
 }
 
-.kuromate-seat[data-state="speaking"] .kuromate-mic-led {
+.kuromate-seat[data-audio-owner="true"][data-state="speaking"] .kuromate-mic-led {
   background-color: #4ade80;
   box-shadow: 0 0 8px #22c55e;
 }
@@ -525,7 +737,7 @@ body {
 
 .kuromate-mic-neck {
   width: 3px;
-  height: 22px;
+  height: 19px;
   background-color: #94a3b8;
 }
 
@@ -534,15 +746,15 @@ body {
   display: flex;
   align-items: center;
   gap: 3px;
-  height: 24px;
+  height: 22px;
   flex-shrink: 0;
 }
 
 .kuro-standby-bar {
-  width: 4px;
-  height: 8px;
+  width: 3.5px;
+  height: 7px;
   border-radius: 999px;
-  background-color: #1d4ed8;
+  background-color: var(--kuro-accent);
 }
 
 .kuro-standby-wave--active .kuro-standby-bar {
@@ -565,61 +777,24 @@ body {
   animation-delay: 180ms;
 }
 
-@media (min-width: 640px) {
-  .kuromate-seat {
-    --kuromate-head-w: 64px;
-    --kuromate-head-h: 52px;
-    --kuromate-torso-wrap-w: 82px;
-    --kuromate-torso-wrap-h: 44px;
-    --kuromate-torso-w: 56px;
-    --kuromate-torso-h: 40px;
-    --kuromate-seat-w: 152px;
+@keyframes kuro-ident-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
   }
-
-  .kuromate-seat[data-host-count="3"] {
-    --kuromate-head-w: 58px;
-    --kuromate-head-h: 46px;
-    --kuromate-torso-wrap-w: 74px;
-    --kuromate-torso-wrap-h: 40px;
-    --kuromate-torso-w: 50px;
-    --kuromate-torso-h: 36px;
-    --kuromate-seat-w: 132px;
-  }
-
-  .kuromate-arm {
-    width: 13px;
-    height: 29px;
-  }
-
-  .kuromate-eye {
-    width: 7px;
-    height: 8px;
+  100% {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-@media (min-width: 768px) {
-  .kuromate-seat {
-    --kuromate-head-w: 72px;
-    --kuromate-head-h: 58px;
-    --kuromate-torso-wrap-w: 94px;
-    --kuromate-torso-wrap-h: 50px;
-    --kuromate-torso-w: 64px;
-    --kuromate-torso-h: 46px;
-    --kuromate-seat-w: 176px;
+@keyframes kuro-standby-breathe {
+  0%,
+  100% {
+    opacity: 0.65;
   }
-
-  .kuromate-seat[data-host-count="3"] {
-    --kuromate-head-w: 66px;
-    --kuromate-head-h: 52px;
-    --kuromate-torso-wrap-w: 86px;
-    --kuromate-torso-wrap-h: 46px;
-    --kuromate-torso-w: 58px;
-    --kuromate-torso-h: 42px;
-    --kuromate-seat-w: 154px;
-  }
-
-  .kuromate-mic-neck {
-    height: 28px;
+  50% {
+    opacity: 1;
   }
 }
 
@@ -629,7 +804,7 @@ body {
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-2.5px);
+    transform: translateY(-2px);
   }
 }
 
@@ -638,7 +813,7 @@ body {
     transform: translateY(0);
   }
   100% {
-    transform: translateY(-4px);
+    transform: translateY(-3.5px);
   }
 }
 
@@ -647,7 +822,7 @@ body {
     height: 3.5px;
   }
   100% {
-    height: 11px;
+    height: 10px;
   }
 }
 
@@ -656,7 +831,7 @@ body {
     transform: rotate(-15deg);
   }
   100% {
-    transform: rotate(-42deg);
+    transform: rotate(-40deg);
   }
 }
 
@@ -678,7 +853,7 @@ body {
     transform: translateY(0);
   }
   90% {
-    transform: translateY(2.5px);
+    transform: translateY(2px);
   }
 }
 
@@ -687,7 +862,7 @@ body {
     transform: translateY(0) rotate(0deg);
   }
   40% {
-    transform: translateY(-6px) rotate(-3deg);
+    transform: translateY(-5px) rotate(-2.5deg);
   }
   75% {
     transform: translateY(0) rotate(2deg);
@@ -695,6 +870,14 @@ body {
   100% {
     transform: translateY(0) rotate(0deg);
   }
+}
+
+[data-reduced-motion="true"] *,
+[data-reduced-motion="true"] *::before,
+[data-reduced-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -713,13 +896,14 @@ body {
   .kuromate-seat .kuromate-eye,
   .kuromate-seat .kuromate-wave-bar,
   .kuromate-seat .kuromate-arm--right,
-  .kuro-standby-wave--active .kuro-standby-bar {
+  .kuro-standby-wave--active .kuro-standby-bar,
+  .kuro-broadcast-ident,
+  .kuro-broadcast-holding-bar {
     animation: none !important;
   }
 
-  /* Retain clear static posture difference without animation */
   .kuromate-seat[data-state="speaking"] .kuromate-body {
-    transform: translateY(-3px);
+    transform: translateY(-2.5px);
   }
 
   .kuromate-seat[data-state="speaking"] .kuromate-wave-bar {

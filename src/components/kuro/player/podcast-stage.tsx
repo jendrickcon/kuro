@@ -2,18 +2,23 @@ import type { CSSProperties } from "react";
 import type { DialogueSegment, Episode } from "@contracts/episode.schema";
 import type { PlaybackStatus } from "@/hooks/use-episode-playback";
 import { ContextualMonitor } from "@/components/kuro/player/contextual-monitor";
-import { KuromateHost, type KuromateHostState } from "@/components/kuro/player/kuromate-host";
+import {
+  KuromateHost,
+  type KuromateHostState,
+  type KuromateSizeVariant,
+} from "@/components/kuro/player/kuromate-host";
 import {
   DEFAULT_STAGE_THEME,
   STAGE_THEME_META,
   type StageTheme,
 } from "@/components/kuro/player/stage-theme";
+import type { EditorialShotDecision } from "@/lib/experience/editorial-shot-selector";
 
 const HOST_STATE_LABELS: Record<KuromateHostState, string> = {
   speaking: "● Speaking",
   captioning: "Captioning",
   listening: "Listening",
-  reacting: "Reacting",
+  reacting: "Reacting (no audio)",
   paused: "Paused",
   complete: "Idle",
   idle: "Idle",
@@ -22,11 +27,11 @@ const HOST_STATE_LABELS: Record<KuromateHostState, string> = {
 const AIR_BADGES: Record<PlaybackStatus, { text: string; toneClass: string }> = {
   idle: {
     text: "STANDBY",
-    toneClass: "border-slate-500 bg-slate-800 text-slate-100",
+    toneClass: "border-white/25 bg-[var(--kuro-studio-surface)] text-[var(--kuro-studio-ink)]",
   },
   playing: {
     text: "● ON AIR",
-    toneClass: "border-red-300 bg-red-600 text-white",
+    toneClass: "border-red-300 bg-[var(--kuro-on-air)] text-white",
   },
   paused: {
     text: "PAUSED",
@@ -43,7 +48,7 @@ export interface PodcastStageProps {
   currentSegment: DialogueSegment;
   currentSegmentIndex: number;
   status: PlaybackStatus;
-  reactionHostId: string | null;
+  shotDecision: EditorialShotDecision;
   isSilentFallback?: boolean;
   isInPadding?: boolean;
   isSamplePreview?: boolean;
@@ -52,15 +57,15 @@ export interface PodcastStageProps {
 }
 
 /**
- * Shared studio stage presenting dynamic hosts[], studio monitor, microphones,
- * shared conversational desk, and accessible desk nameplates.
+ * Editorial 9:16-ready portrait broadcast stage rendering Top contextual display zone (~38%)
+ * and Middle editorial Kuromate stage (~38%) driven by `shotDecision` and dynamic `hosts[]`.
  */
 export function PodcastStage({
   episode,
   currentSegment,
   currentSegmentIndex,
   status,
-  reactionHostId,
+  shotDecision,
   isSilentFallback = false,
   isInPadding = false,
   isSamplePreview = false,
@@ -70,7 +75,7 @@ export function PodcastStage({
   const hostCount: 2 | 3 = episode.hosts.length === 3 ? 3 : 2;
   const activeSeatIndex = Math.max(
     0,
-    episode.hosts.findIndex((host) => host.id === currentSegment.speakerId),
+    episode.hosts.findIndex((host) => host.id === shotDecision.audioOwnerHostId),
   );
   const themeMeta = STAGE_THEME_META[theme];
   const airBadge = isPreparingAudio
@@ -89,114 +94,158 @@ export function PodcastStage({
             toneClass: "border-amber-300 bg-amber-600 text-white",
           }
         : AIR_BADGES[status];
+
   const paddedTurn = String(currentSegmentIndex + 1).padStart(2, "0");
   const paddedTotal = String(episode.segments.length).padStart(2, "0");
 
   function resolveHostState(hostId: string): KuromateHostState {
     if (isPreparingAudio) return "idle";
     if (status === "complete") return "complete";
+    const isOwner = hostId === shotDecision.audioOwnerHostId;
+    const isReactor = hostId === shotDecision.reactionIndicatorHostId;
+
     if (status === "playing") {
       if (isInPadding) {
-        return reactionHostId === hostId ? "reacting" : "listening";
+        return isReactor ? "reacting" : "listening";
       }
-      if (hostId === currentSegment.speakerId) {
+      if (isOwner) {
         return isSilentFallback ? "captioning" : "speaking";
       }
-      if (reactionHostId === hostId) return "reacting";
+      if (isReactor) return "reacting";
       return "listening";
     }
-    if (status === "paused" && hostId === currentSegment.speakerId) return "paused";
-    if (reactionHostId === hostId) return "reacting";
+    if (status === "paused" && isOwner) return "paused";
+    if (isReactor && !isOwner) return "reacting";
     return "idle";
   }
 
-  function resolveSeatPosition(seatIdx: number): "left" | "center" | "right" {
-    if (hostCount === 2) return seatIdx === 0 ? "left" : "right";
-    if (seatIdx === 0) return "left";
-    if (seatIdx === 1) return "center";
+  function resolveSizeVariant(): KuromateSizeVariant {
+    if (shotDecision.shotType === "visual-explanation") return "docked";
+    if (shotDecision.shotType === "speaker-closeup") return "closeup";
+    if (shotDecision.shotType === "reaction-shot" && visibleHosts.length === 1) return "closeup";
+    if (visibleHosts.length === 3) return "compact";
+    return "standard";
+  }
+
+  const visibleHostSet = new Set(shotDecision.visibleHostIds);
+  const visibleHosts = episode.hosts.filter((host) => visibleHostSet.has(host.id));
+  const stageHosts = visibleHosts.length > 0 ? visibleHosts : episode.hosts.slice(0, 1);
+  const sizeVariant = resolveSizeVariant();
+
+  function resolveSeatPosition(hostIdx: number): "left" | "center" | "right" {
+    if (stageHosts.length === 1) return "center";
+    if (stageHosts.length === 2) return hostIdx === 0 ? "left" : "right";
+    if (hostIdx === 0) return "left";
+    if (hostIdx === 1) return "center";
     return "right";
   }
 
-  function resolveLookDirection(hostState: KuromateHostState, seatIdx: number): "left" | "right" | "center" {
-    if (hostState === "listening") {
-      if (activeSeatIndex < seatIdx) return "left";
-      if (activeSeatIndex > seatIdx) return "right";
+  function resolveLookDirection(
+    hostState: KuromateHostState,
+    globalSeatIdx: number,
+  ): "left" | "right" | "center" {
+    if (stageHosts.length === 1) return "center";
+    if (hostState === "listening" || hostState === "reacting") {
+      if (activeSeatIndex < globalSeatIdx) return "left";
+      if (activeSeatIndex > globalSeatIdx) return "right";
       return "center";
     }
     if (hostCount === 2) {
-      return seatIdx === 0 ? "right" : "left";
+      return globalSeatIdx === 0 ? "right" : "left";
     }
-    if (seatIdx === 0) return "right";
-    if (seatIdx === 2) return "left";
+    if (globalSeatIdx === 0) return "right";
+    if (globalSeatIdx === 2) return "left";
     return "center";
   }
 
   return (
     <section
-      aria-label="Kuro shared podcast studio"
+      aria-label="Kuro portrait podcast studio"
       data-stage-theme={theme}
       data-hosts={hostCount}
       data-playback={status}
-      className="kuro-studio-stage relative overflow-hidden rounded-2xl border-2 border-slate-800 text-slate-50 shadow-sm"
+      data-editorial-shot={shotDecision.shotType}
+      data-audio-owner={shotDecision.audioOwnerHostId}
+      className="kuro-studio-stage relative flex flex-col justify-between overflow-hidden text-[var(--kuro-studio-ink)]"
     >
       <div aria-hidden="true" className="kuro-studio-slats kuro-studio-slats--left" />
       <div aria-hidden="true" className="kuro-studio-slats kuro-studio-slats--right" />
 
-      <div className="relative z-10 flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 sm:px-4">
-        <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-extrabold tracking-wide ${airBadge.toneClass}`}>
+      {/* Studio Top Bar */}
+      <div className="relative z-10 flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+        <span
+          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-extrabold tracking-wide ${airBadge.toneClass}`}
+        >
           {airBadge.text}
         </span>
-        <span className="text-[11px] font-extrabold tracking-[0.14em] text-slate-300">
-          {themeMeta.stageLabel}
+
+        <span className="truncate rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[11px] font-semibold text-[var(--kuro-studio-ink-muted)]">
+          {shotDecision.shotLabel}
         </span>
-        <span className="text-xs font-extrabold tabular-nums text-slate-100">
+
+        <span className="font-mono-kuro text-xs font-bold text-[var(--kuro-studio-ink)]">
           {paddedTurn} / {paddedTotal}
         </span>
       </div>
 
-      <div className="relative z-10 px-2.5 pt-2 sm:px-5 sm:pt-3">
+      {/* Top Safe Zone (~38%): Contextual Visualization */}
+      <div className="kuro-stage-visual-zone relative z-10 min-h-[124px] px-2.5 pt-2.5">
         <ContextualMonitor
           visualCue={currentSegment.visualCue}
           episodeTitle={episode.title}
           isPlaying={status === "playing" && !isSilentFallback && !isPreparingAudio}
           monitorLabel={themeMeta.monitorLabel}
+          priority={shotDecision.visualPriority}
         />
       </div>
 
+      {/* Middle Safe Zone (~38%): Editorial Kuromate Framing */}
       <div
-        className={`kuro-hosts-row relative z-10 flex items-end justify-center px-2 pt-2 sm:px-5 sm:pt-3 ${
-          hostCount === 3 ? "kuro-hosts-row--3 gap-1 sm:gap-5" : "kuro-hosts-row--2 gap-3 sm:gap-10"
+        className={`kuro-stage-hosts-zone relative z-10 flex min-h-[138px] items-end justify-center px-2.5 pt-3 ${
+          stageHosts.length === 3 ? "gap-1.5" : "gap-5"
         }`}
       >
-        {episode.hosts.map((host, seatIdx) => {
+        {stageHosts.map((host, idx) => {
+          const globalSeatIdx = Math.max(
+            0,
+            episode.hosts.findIndex((h) => h.id === host.id),
+          );
           const hostState = resolveHostState(host.id);
+          const isAudioOwner = host.id === shotDecision.audioOwnerHostId;
           return (
             <KuromateHost
               key={host.id}
               host={host}
               state={hostState}
-              lookDirection={resolveLookDirection(hostState, seatIdx)}
-              seatPosition={resolveSeatPosition(seatIdx)}
+              lookDirection={resolveLookDirection(hostState, globalSeatIdx)}
+              seatPosition={resolveSeatPosition(idx)}
               hostCount={hostCount}
+              sizeVariant={sizeVariant}
+              isAudioOwner={isAudioOwner}
             />
           );
         })}
       </div>
 
+      {/* Desk Rim & Dynamic Cast Ownership Plates */}
       <div className="relative z-20">
         <div aria-hidden="true" className="kuro-shared-desk-rim" />
 
         <div
-          className={`kuro-nameplate-row grid gap-1.5 px-2.5 py-2 sm:gap-3 sm:px-5 sm:py-2.5 ${
+          className={`kuro-nameplate-row grid gap-1.5 px-2.5 py-2 ${
             hostCount === 3 ? "grid-cols-3" : "grid-cols-2"
           }`}
         >
           {episode.hosts.map((host) => {
             const hostState = resolveHostState(host.id);
             const isSpeaking = hostState === "speaking";
+            const isReactingNonOwner =
+              hostState === "reacting" && host.id !== shotDecision.audioOwnerHostId;
             const isCaptioning = hostState === "captioning";
             const isPausedSpeaker = hostState === "paused";
-            const statusText = HOST_STATE_LABELS[hostState];
+            const statusText = isReactingNonOwner
+              ? "Reacting"
+              : HOST_STATE_LABELS[hostState];
             const accentStyle = { "--kuromate-accent": host.accentColor } as CSSProperties;
 
             return (
@@ -204,44 +253,45 @@ export function PodcastStage({
                 key={host.id}
                 style={accentStyle}
                 aria-label={`${host.name}, ${host.role}, ${statusText.replace("● ", "")}`}
-                className={`kuro-nameplate min-w-0 rounded-lg border px-1.5 py-1.5 text-center transition-colors sm:px-3 sm:py-2 ${
+                className={`kuro-nameplate min-w-0 rounded-lg border px-1.5 py-1 text-center transition-colors ${
                   isSpeaking
                     ? "border-white/90 bg-white/15"
-                    : isCaptioning
-                      ? "border-amber-300/80 bg-white/10"
-                      : isPausedSpeaker
-                        ? "border-slate-300/70 bg-white/10"
-                        : "border-white/15 bg-white/5"
+                    : isReactingNonOwner
+                      ? "border-amber-300/60 bg-white/10"
+                      : isCaptioning
+                        ? "border-amber-300/80 bg-white/10"
+                        : isPausedSpeaker
+                          ? "border-white/60 bg-white/10"
+                          : "border-white/15 bg-white/5"
                 }`}
               >
                 <span
                   aria-hidden="true"
-                  className="mx-auto mb-1 block h-1 w-8 rounded-full transition-opacity sm:w-12"
+                  className="mx-auto mb-1 block h-1 w-8 rounded-full transition-opacity"
                   style={{
                     backgroundColor: host.accentColor,
                     opacity: isSpeaking || isCaptioning || isPausedSpeaker ? 1 : 0.45,
                   }}
                 />
-                <p
-                  title={host.name}
-                  className="truncate text-xs font-extrabold text-white sm:text-sm"
-                >
+                <p title={host.name} className="truncate text-xs font-extrabold text-white">
                   {host.name}
                 </p>
-                <p className="truncate text-[11px] font-medium capitalize text-slate-300 sm:text-xs">
+                <p className="truncate text-[10px] font-medium capitalize text-[var(--kuro-studio-ink-muted)]">
                   {host.role}
                 </p>
                 <span
                   aria-hidden="true"
-                  className="mt-1 inline-flex max-w-full items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-tight sm:text-[11px]"
+                  className="mt-1 inline-flex max-w-full items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-tight"
                   style={
                     isSpeaking
                       ? { backgroundColor: host.accentColor, color: "#ffffff" }
-                      : isCaptioning
-                        ? { backgroundColor: "#fef3c7", color: "#78350f" }
-                        : isPausedSpeaker
-                          ? { backgroundColor: "#ffffff", color: "#0f172a" }
-                          : { backgroundColor: "rgba(255,255,255,0.12)", color: "#e2e8f0" }
+                      : isReactingNonOwner
+                        ? { backgroundColor: "#334155", color: "#f8fafc" }
+                        : isCaptioning
+                          ? { backgroundColor: "#fef3c7", color: "#78350f" }
+                          : isPausedSpeaker
+                            ? { backgroundColor: "#ffffff", color: "#0f172a" }
+                            : { backgroundColor: "rgba(255,255,255,0.12)", color: "#e2e8f0" }
                   }
                 >
                   {statusText}

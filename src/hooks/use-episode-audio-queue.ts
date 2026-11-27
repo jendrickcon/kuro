@@ -47,7 +47,7 @@ function parseHostedStateHeader(value: string | null | undefined): HostedTtsHeal
   return parsed.success ? parsed.data : undefined;
 }
 
-async function fetchCompiledBrowserSegmentAudio(
+export async function fetchCompiledBrowserSegmentAudio(
   payload: CompilerSegmentRequestPayload,
   signal: AbortSignal,
 ): Promise<FetchCompiledSegmentResult> {
@@ -182,7 +182,7 @@ async function fetchCompiledBrowserSegmentAudio(
 }
 
 /** Single controlled HTMLAudioElement driver synced to compiled WAV batches without autoplay hacks. */
-function createBatchAudioDriver(): BatchAudioDriver {
+export function createBatchAudioDriver(): BatchAudioDriver {
   let element: HTMLAudioElement | null = typeof Audio !== "undefined" ? new Audio() : null;
   let activeGeneration = 0;
   let currentCallbacks: BatchAudioDriverCallbacks | null = null;
@@ -366,6 +366,45 @@ export interface EpisodeAudioQueueHookResult {
   cancel: () => void;
   dispose: () => void;
   downloadAudio: () => { filename: string } | null;
+}
+
+/** Adapts a retained EpisodeBatchCompilerController into EpisodeAudioQueueHookResult without owning disposal. */
+export function createQueueAdapter(
+  controller: EpisodeBatchCompilerController,
+  snapshot: EpisodeBatchCompilerSnapshot,
+): EpisodeAudioQueueHookResult {
+  const hostIdentities = snapshot.hostIdentities;
+  return {
+    snapshot,
+    hostIdentities,
+    startCompilation: () => controller.startCompilation(),
+    startPodcast: () => controller.startPodcast(),
+    play: () => controller.play(),
+    pause: () => controller.pause(),
+    togglePlayPause: () => controller.togglePlayPause(),
+    previous: () => controller.previous(),
+    next: () => controller.next(),
+    seekToMs: (targetMs: number) => controller.seekToMs(targetMs),
+    restart: () => controller.restart(),
+    replay: () => controller.replay(),
+    retryFailedTurns: () => controller.retryFailedTurns(),
+    cancel: () => controller.cancel(),
+    dispose: () => controller.dispose(),
+    downloadAudio: () => {
+      const snap = controller.getSnapshot();
+      const blob = controller.getFullWavBlob();
+      if (!snap.canDownloadAudio || !blob || !snap.fullAudioUrl) {
+        return null;
+      }
+      const link = document.createElement("a");
+      link.href = snap.fullAudioUrl;
+      link.download = snap.downloadFilename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return { filename: snap.downloadFilename };
+    },
+  };
 }
 
 /** Connects the authoritative WP-012 Hybrid 4-Turn Batch Compiler across loading, playback, and WAV download. */

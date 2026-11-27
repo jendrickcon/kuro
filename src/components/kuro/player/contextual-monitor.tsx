@@ -21,14 +21,19 @@ export interface ContextualMonitorProps {
   episodeTitle: string;
   isPlaying: boolean;
   monitorLabel: string;
+  priority?: "visual" | "speaker" | "cast";
 }
 
-/** Studio wall display integrated behind hosts with schema-validated visual fallback. */
+/**
+ * Top safe-zone contextual display rendered in semantic HTML with high-contrast studio-paper
+ * inner cards and WP-013 theme slot (`data-kuro-slot="contextual-visual"`).
+ */
 export function ContextualMonitor({
   visualCue,
   episodeTitle,
   isPlaying,
   monitorLabel,
+  priority = "speaker",
 }: ContextualMonitorProps) {
   const warnedRef = useRef(false);
   const parsed = VisualCueSchema.safeParse(visualCue);
@@ -46,31 +51,37 @@ export function ContextualMonitor({
   return (
     <aside
       aria-label="Studio contextual display"
+      data-kuro-slot="contextual-visual"
       data-cue-type={safeCue.type}
-      className={`kuro-studio-monitor mx-auto w-full rounded-xl border-2 p-2.5 transition-colors sm:p-3 ${
-        hasMeaningfulCue
-          ? "border-slate-500 bg-slate-950/95 shadow-lg"
-          : "max-w-lg border-slate-600/80 bg-slate-950/85"
+      data-visual-priority={priority}
+      className={`w-full rounded-[var(--kuro-radius-md)] border p-2 transition-colors ${
+        hasMeaningfulCue || priority === "visual"
+          ? "border-[var(--kuro-accent)]/70 bg-[var(--kuro-studio-surface)] shadow-md"
+          : "border-[var(--kuro-studio-border)] bg-[var(--kuro-studio-surface)]/85"
       }`}
     >
-      <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-700/80 pb-1.5">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-white/10 pb-1">
+        <div className="flex min-w-0 items-center gap-1.5">
           <span
             aria-hidden="true"
             className={`h-2 w-2 shrink-0 rounded-full ${
-              hasMeaningfulCue ? "bg-sky-400" : isPlaying ? "bg-emerald-400" : "bg-slate-500"
+              hasMeaningfulCue
+                ? "bg-[var(--kuro-accent)]"
+                : isPlaying
+                  ? "bg-emerald-400"
+                  : "bg-slate-400"
             }`}
           />
-          <span className="truncate text-[11px] font-extrabold tracking-wider text-sky-200">
+          <span className="truncate text-[10px] font-bold tracking-wider text-[var(--kuro-studio-ink-muted)]">
             {monitorLabel}
           </span>
         </div>
-        <span className="shrink-0 rounded-full border border-slate-600 bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-slate-100">
+        <span className="shrink-0 rounded-full border border-[var(--kuro-studio-border)] bg-[var(--kuro-studio-bg)] px-2 py-0.5 text-[10px] font-bold text-[var(--kuro-studio-ink)]">
           {CUE_LABELS[safeCue.type]}
         </span>
       </div>
 
-      <div className="min-w-0 rounded-lg bg-slate-50 p-2.5 text-slate-950 sm:p-3">
+      <div className="min-w-0 rounded-[var(--kuro-radius-sm)] bg-[var(--kuro-surface)] p-2 text-[var(--kuro-ink)]">
         {safeCue.type === "comparison" ? <ComparisonVisual cue={safeCue} /> : null}
         {safeCue.type === "timeline" ? <TimelineVisual cue={safeCue} /> : null}
         {safeCue.type === "process" ? <ProcessVisual cue={safeCue} /> : null}

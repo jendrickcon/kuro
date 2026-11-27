@@ -32,25 +32,25 @@ export function CaptionPanel({
 }: CaptionPanelProps) {
   const speakerName = activeHost?.name ?? currentSegment.speakerId;
   const speakerRole = activeHost?.role;
-  const accentColor = activeHost?.accentColor ?? "#1d4ed8";
+  const accentColor = activeHost?.accentColor ?? "#C2552B";
   const panelStyle = { borderLeftColor: accentColor } as CSSProperties;
 
   return (
     <section
       aria-label="Synchronized captions"
       style={panelStyle}
-      className="rounded-2xl border border-slate-300 border-l-[6px] bg-white p-3.5 shadow-xs sm:p-4"
+      className="border-t border-l-[6px] border-[var(--kuro-border)] bg-[var(--kuro-surface)] p-3 text-[var(--kuro-ink)] sm:p-3.5"
     >
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span
             aria-hidden="true"
             className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ backgroundColor: accentColor }}
           />
-          <span className="text-sm font-extrabold text-slate-950">{speakerName}</span>
+          <span className="text-sm font-extrabold text-[var(--kuro-ink)]">{speakerName}</span>
           {speakerRole ? (
-            <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-800">
+            <span className="rounded-full border border-[var(--kuro-border)] bg-[var(--kuro-surface-muted)] px-2 py-0.5 text-[11px] font-semibold capitalize text-[var(--kuro-ink)]">
               {speakerRole}
             </span>
           ) : null}
@@ -59,35 +59,37 @@ export function CaptionPanel({
               Preparing turns {bufferingTurnRange ?? "next"}…
             </span>
           ) : status === "paused" ? (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-900">
+            <span className="rounded-full border border-[var(--kuro-warn-border)] bg-[var(--kuro-warn-bg)] px-2 py-0.5 text-[11px] font-bold text-[var(--kuro-warn-ink)]">
               Paused
             </span>
           ) : null}
         </div>
 
-        <span className="text-xs font-bold tabular-nums text-slate-700">
+        <span className="font-mono-kuro text-xs font-bold text-[var(--kuro-ink-muted)]">
           Turn {currentSegmentIndex + 1} of {totalSegments}
         </span>
       </div>
 
       {isSamplePreview ? (
-        <p className="mb-2 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-950">
-          Sample Preview — built-in timed walkthrough (no live audio keys used)
+        <p className="mb-1.5 inline-block rounded-md border border-[var(--kuro-warn-border)] bg-[var(--kuro-warn-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--kuro-warn-ink)]">
+          Sample Preview — timed captions walkthrough (no live keys used)
         </p>
       ) : null}
 
       <div aria-live="polite" aria-atomic="true">
         <p className="sr-only">
-          {`Turn ${currentSegmentIndex + 1} of ${totalSegments}. ${speakerName}${speakerRole ? `, ${speakerRole}` : ""}: `}
+          {`Turn ${currentSegmentIndex + 1} of ${totalSegments}. ${speakerName}${
+            speakerRole ? `, ${speakerRole}` : ""
+          }: `}
         </p>
-        <p className="max-w-[65ch] text-base leading-relaxed font-semibold text-slate-950 break-words sm:text-lg">
+        <p className="text-pretty-kuro max-w-[65ch] text-sm leading-relaxed font-semibold text-[var(--kuro-ink)] break-words sm:text-base">
           {currentSegment.text}
         </p>
       </div>
 
       {previousSegment ? (
-        <p className="mt-3 border-t border-slate-200 pt-2 text-xs leading-relaxed text-slate-700 break-words">
-          <span className="font-bold text-slate-800">
+        <p className="mt-2 border-t border-[var(--kuro-border)] pt-1.5 text-xs leading-snug text-[var(--kuro-ink-muted)] break-words">
+          <span className="font-bold text-[var(--kuro-ink)]">
             Previous — {previousHost?.name ?? previousSegment.speakerId}:
           </span>{" "}
           “{previousSegment.text}”
@@ -98,15 +100,15 @@ export function CaptionPanel({
         <div
           role="status"
           aria-live="polite"
-          className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2.5"
+          className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--kuro-ready-border)] bg-[var(--kuro-ready-bg)] px-3 py-2"
         >
-          <p className="text-xs font-bold text-emerald-950 sm:text-sm">
-            Episode complete — all hosts returned to idle. Replay anytime or download the transcript.
+          <p className="text-xs font-bold text-[var(--kuro-ready-ink)]">
+            Episode complete — replay anytime or save your downloads.
           </p>
           <button
             type="button"
             onClick={onReplay}
-            className="min-h-11 rounded-lg bg-emerald-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-900"
+            className="kuro-interactive min-h-11 rounded-xl bg-[var(--kuro-ready-ink)] px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90"
           >
             Replay episode
           </button>

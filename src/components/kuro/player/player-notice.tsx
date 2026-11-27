@@ -14,8 +14,8 @@ export interface PlayerNoticeProps {
 }
 
 /**
- * Renders one honest, cohesive episode-level summary label for Sample Preview vs. compiled live audio
- * without exposing backend vendor names or contradicting boundary states.
+ * Renders one cohesive status notice summarizing Sample Preview vs compiled live audio
+ * without exposing backend provider or voice names.
  */
 export function PlayerNotice({
   source,
@@ -37,7 +37,7 @@ export function PlayerNotice({
   if (isSample) {
     summaryLabel = "Sample Preview";
     contextLine =
-      "Built-in walkthrough using timed sample pacing. Live TTS providers are not called and audio download is disabled.";
+      "Built-in walkthrough using timed sample pacing. Live TTS providers are not called and WAV download is disabled.";
   } else if (snapshot.hasBlockingFailure || snapshot.isConfigBlocked) {
     summaryLabel = "Compilation stopped";
     contextLine = snapshot.failureMessage;
@@ -63,10 +63,10 @@ export function PlayerNotice({
   return (
     <div
       role="status"
-      className={`rounded-xl border px-3 py-1.5 text-xs leading-snug ${
+      className={`rounded-xl border px-3 py-2 text-xs leading-snug ${
         hasIssue
-          ? "border-amber-300 bg-amber-50 text-amber-950"
-          : "border-slate-200 bg-slate-50 text-slate-800"
+          ? "border-[var(--kuro-warn-border)] bg-[var(--kuro-warn-bg)] text-[var(--kuro-warn-ink)]"
+          : "border-[var(--kuro-border)] bg-[var(--kuro-surface)] text-[var(--kuro-ink)]"
       }`}
     >
       {isSample ? (

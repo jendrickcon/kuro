@@ -10,18 +10,22 @@ export type KuromateHostState =
   | "paused"
   | "complete";
 
+export type KuromateSizeVariant = "closeup" | "standard" | "compact" | "docked";
+
 export interface KuromateHostProps {
   host: Host;
   state: KuromateHostState;
   lookDirection: "left" | "right" | "center";
   seatPosition: "left" | "center" | "right";
   hostCount: 2 | 3;
+  sizeVariant?: KuromateSizeVariant;
+  isAudioOwner?: boolean;
 }
 
 /**
- * Reusable embodied Kuromate mascot rendered from episode.hosts[].
- * Uses an original flat-motion geometric style with subtle overhead stage lighting
- * and active microphone LED emphasis — never large enclosing containment halos.
+ * Refined provisional Kuromate character renderer driven dynamically by `episode.hosts[]`.
+ * Marks `data-kuro-slot="kuromate-renderer"` so WP-013 can drop in final original artwork
+ * cleanly while preserving active-audio ownership boundaries (`isAudioOwner`).
  */
 export function KuromateHost({
   host,
@@ -29,17 +33,27 @@ export function KuromateHost({
   lookDirection,
   seatPosition,
   hostCount,
+  sizeVariant = hostCount === 3 ? "compact" : "standard",
+  isAudioOwner = state === "speaking",
 }: KuromateHostProps) {
   const accentStyle = { "--kuromate-accent": host.accentColor } as CSSProperties;
 
   return (
     <div
-      className={`kuromate-seat ${hostCount === 3 && seatPosition === "center" ? "kuromate-seat--center-trio" : ""}`}
+      data-kuro-slot="kuromate-renderer"
+      data-host-id={host.id}
+      className={`kuromate-seat ${
+        hostCount === 3 && seatPosition === "center" && sizeVariant === "compact"
+          ? "kuromate-seat--center-trio"
+          : ""
+      }`}
       data-state={state}
       data-role={host.role}
       data-look={lookDirection}
       data-seat={seatPosition}
       data-host-count={hostCount}
+      data-size-variant={sizeVariant}
+      data-audio-owner={isAudioOwner ? "true" : "false"}
       style={accentStyle}
     >
       <div aria-hidden="true" className="kuromate-stage-light" />
