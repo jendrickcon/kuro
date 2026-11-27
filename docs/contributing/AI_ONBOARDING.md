@@ -27,7 +27,7 @@ Report briefly from observed files/commands:
 - Tech stack (`Next.js`, `React`, `TypeScript`, `Tailwind CSS`, `Zod`, `Node.js 24.x` + `npm`)
 - Available npm scripts (`dev`, `build`, `start`, `lint`, `typecheck`, `test:schema`)
 - Major directories (`src/`, `contracts/`, `fixtures/`, `prototype/`, `docs/`, `scripts/`)
-- Current project status (`Verified` mock player on `main`; live Gemini/TTS/Vercel `Pending` or `Blocked`)
+- Current project status (`WP-001`–`WP-012` verified live on `main` and Production `https://kuro-enuhri.vercel.app`; `WP-012.5`–`WP-020` tracked in `ROADMAP_BRIEF.md`)
 - Current exclusions (`SPEC.md` Section 4)
 - Missing local prerequisites (e.g., `node`, `npm`, `git`, `node_modules`)
 
@@ -35,8 +35,8 @@ Report briefly from observed files/commands:
 Ask **exactly**:
 
 > Which Kuro contributor are you?
-> 1. Team Member Lucky
-> 2. Team Member JR
+> 1. Team Member Lucky (Angel)
+> 2. Team Member JR (John Rae)
 > 3. Project Owner
 
 Wait for the answer before proceeding.

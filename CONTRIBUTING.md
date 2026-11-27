@@ -6,9 +6,8 @@
 
 ## Current Milestone Status
 
-- **Main (`Verified`):** Production creation flow and multi-host timed preview player (`WP-001`–`WP-007` + `WP-008.5`).
-- **WP-008 (`In Review` / `Mock`):** Mock milestone freeze & QA evidence in open PR `#1` (`test/wp-008-mock-milestone`).
-- **Live AI & Audio (`Blocked` / `Pending`):** Live Gemini script generation (`WP-009`), hosted segmented TTS (`WP-010`), and real audio/stitching (`WP-011`) await `WP-003B` provider verification and server-side `GEMINI_API_KEY`.
+- **Completed on `main` (`Verified` — `f3c8b6a`):** `WP-001`–`WP-012` live at [kuro-enuhri.vercel.app](https://kuro-enuhri.vercel.app) (Next.js App Router, Gemini script generation, Deepgram Aura-2 primary TTS + Gemini Flash-Lite fallback, Layer-1 Kuromate identities, hybrid batch compilation with `NO AUDIO, NO ADVANCE`, timeline scrubber, in-browser `.wav` & `.txt` downloads, and zero-key `Sample Preview`).
+- **Next Up (`WP-012.5`):** Owner-led product experience architecture & workflow before `WP-013` (Lucky) and `WP-016` (JR) begin. See [ROADMAP_BRIEF.md](./docs/contributing/ROADMAP_BRIEF.md) for the canonical `WP-012.5`–`WP-020` sequence and ownership.
 
 ## Required First Instructions for Contributor AIs
 
@@ -16,9 +15,9 @@
 
 Next, identify who you are working with and **wait for their answer before assigning or modifying anything**:
 
-> Which Kuro contributor are you: Team Member Lucky or Team Member JR?
+> Which Kuro contributor are you: Team Member Lucky (Angel) or Team Member JR (John Rae)?
 
-*(Contributors may also answer **"I am the project owner."** If so, follow [SPEC.md](./SPEC.md) and [AGENTS.md](./AGENTS.md) directly instead of a member-specific lane.)*
+*(Contributors may also answer **"I am the project owner (Jendrick)."** Note: Angel = Lucky and John Rae = JR; there is no fourth contributor.)*
 
 Read [AI Onboarding Instructions](./docs/contributing/AI_ONBOARDING.md) for the exact step-by-step AI greeting, audit, setup, and roadmap flow.
 
@@ -32,15 +31,15 @@ Kuro is a **Node.js + npm** Next.js/TypeScript project (`engines.node: "24.x"` i
 ## Team Lanes & Contributor Guides
 
 - [AI_ONBOARDING.md](./docs/contributing/AI_ONBOARDING.md) — Starter prompt and 6-step onboarding contract for Claude Code, Codex, and compatible AIs.
-- [TEAM_LUCKY.md](./docs/contributing/TEAM_LUCKY.md) — Lucky’s UI/UX, visual direction, typography, accessibility, responsive, and mascot reference lane (Claude Code).
-- [TEAM_JR.md](./docs/contributing/TEAM_JR.md) — JR’s schema, backend, Gemini/TTS pipeline, security, reliability, and testing-first lane (Codex).
-- [ROADMAP_BRIEF.md](./docs/contributing/ROADMAP_BRIEF.md) — High-level completed, active, pending, and stretch work packages.
+- [TEAM_LUCKY.md](./docs/contributing/TEAM_LUCKY.md) — Lucky’s (`Angel`) UI/UX, visual direction, typography, accessibility, responsive, and mascot reference lane (Claude Code).
+- [TEAM_JR.md](./docs/contributing/TEAM_JR.md) — JR’s (`John Rae`) schema, backend, Gemini/TTS pipeline, security, reliability, and testing-first lane (Codex).
+- [ROADMAP_BRIEF.md](./docs/contributing/ROADMAP_BRIEF.md) — Canonical completed, active, blocked, pending, and stretch work packages (`WP-001`–`WP-020`).
 - [SETUP_WINDOWS.md](./docs/contributing/SETUP_WINDOWS.md) — Beginner-friendly Windows clone, `npm ci`, verification, and troubleshooting guide.
 
 ## Branch, PR & Verification Rules
 
 - Always branch from up-to-date `main` using one dedicated branch per approved work package.
-- Run local checks (`npm ci`, `npm run typecheck`, `npm run lint`, `npm run test:schema`, `npm run build`) plus lane-specific verification before pushing.
+- Run local checks (`npm ci` when clean, `npm run typecheck`, `npm run lint`, `npm run test:schema`, `npm run test:generation`, `npm run test:tts`, `npm run test:wav`, `npm run test:audio-queue`, `npm run build`) plus lane-specific verification before pushing.
 - Open one PR targeting `main` using `.github/pull_request_template.md`, **leave the PR OPEN**, report the PR number and URL, and stop for Project Owner review. Only the Project Owner decides whether to merge or close PRs.
 
 ## Creative Freedom Rule

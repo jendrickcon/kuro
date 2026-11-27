@@ -2,35 +2,35 @@
 
 **More voices. Clearer ideas.**
 
-Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a difficult topic, class reading, or pasted study material into an adaptive multi-host conversation built for commuting college students. Listeners follow distinct AI host voices with synchronized captions, lightweight active-speaker animation, a structured contextual visual, and downloadable audio and transcripts.
+Kuro (*Kuro: Adaptive Conversations for Better Understanding*) transforms a topic, class reading, or pasted study material into an adaptive multi-host conversation built for commuting college students, with distinct Kuromate voices, synchronized captions, contextual visuals, and downloadable audio and transcripts.
 
-## Hackathon
+## Hackathon & Live Production
 
-- **Event:** [SLAY HACKS 2026](https://slayy-hacks.devpost.com/)
-- **Internal deadline:** December 7, 2026 (Manila time); official deadline December 7, 2026 at 5:00 PM EST (~December 8, 6:00 AM Manila) — remaining hours are emergency buffer only.
-- **Eligibility note:** Each team member must independently verify eligibility on the official Devpost rules page; official rules control.
+- **Event:** [SLAY HACKS 2026](https://slayy-hacks.devpost.com/) (Internal cutoff: Dec 7, 2026 Manila; official: Dec 7, 5:00 PM EST).
+- **Live Production:** [kuro-enuhri.vercel.app](https://kuro-enuhri.vercel.app)
+- **Eligibility note:** Each team member must independently verify eligibility on the official Devpost rules page.
 
-## Current Status
+## Current Status & Sequence
 
-- **Completed (`WP-008`–`WP-011`):** Verified Next.js application with live Gemini script generation (`WP-009`), allowlisted Kuromate voices (`WP-010`), and full-episode audio queue playback with bounded prefetching and caption fallback (`WP-011` on `feat/wp-011-full-episode-audio`).
-- **Deferred / Download limit:** Transcript `.txt` download is active; combined episode audio download, persistent storage, and offline audio remain deferred.
+- **Completed (`WP-001`–`WP-012`):** Verified live on `main` (`f3c8b6a`): Gemini structured scripts (`WP-009`), Deepgram Aura-2 primary TTS + Gemini Flash-Lite fallback (`WP-010`–`WP-011.5`), Layer-1 Kuromate voice identities (`Leo = Hermes`), hybrid batch compilation (`NO AUDIO, NO ADVANCE`), browser WAV stitching, timeline scrubber, `.wav` & `.txt` downloads, and zero-key `Sample Preview` (`WP-012`).
+- **Next (`WP-012.5` -> `WP-020`):** Owner-led **`WP-012.5`** (experience architecture & 5-screen workflow) runs next before parallel `WP-013` (Lucky) and `WP-016` (JR). See [ROADMAP_BRIEF.md](./docs/contributing/ROADMAP_BRIEF.md).
 
-## Core MVP (Hosted Audio Active)
+## Core MVP
 
-- Input 10–2,500 chars; choose **Casual** or **Serious** tone, **Quick** (~8–10 turns) or **Detailed** (~12–15 turns) length, and **2** or **3** Kuromates.
-- Generate an episode and follow the single loading flow as Kuro prepares opening Kuromate voices sequentially before starting playback with max-2 prefetching, synchronized captions, studio monitor visuals, shared `Retry-After` handling, explicit caption fallback, and `.txt` transcript download (plus `prototype/index.html` standalone demo).
+- Input 10–2,500 chars; choose **Casual** or **Serious**, **Quick** (8–10 turns) or **Detailed** (12–15 turns), and **2** or **3** Kuromates (`hosts[]`).
+- **Hybrid batch audio (`NO AUDIO, NO ADVANCE`):** Quick compiles 100% before Play; Detailed compiles Batch 1 (4 turns) before Play and rolls 4-turn batches in background. Built-in **Sample Preview** works with zero keys (`0` TTS calls; captions only).
 
-See [SPEC.md](./SPEC.md) for the full specification, episode contract, exclusions, and roadmap.
+See [SPEC.md](./SPEC.md) for the locked specification, contract, and exclusions.
 
 ## Tech Stack
 
 - **App:** Next.js (App Router), React, TypeScript, Tailwind CSS, Zod
-- **AI & Audio:** Gemini `gemini-3.8-flash` (`v1`) scripts + `gemini-3.8-flash-tts` (`v1beta`) segmented audio queue; combined audio download deferred
+- **AI & Audio:** Gemini `gemini-3.8-flash` (`v1`, fallback `gemini-3.5-flash-lite`) scripts + Deepgram Aura-2 primary TTS & Gemini `gemini-3.8-flash-lite-tts` (`v1beta`) fallback; in-browser `24 kHz` mono WAV stitching
 - **Hosting & Workflow:** Vercel, GitHub
 
 ## Local Setup
 
-Prerequisites: Node.js 24+ and npm. Zero API keys are needed for the sample/mock flow (`GEMINI_API_KEY`, `GEMINI_TEXT_MODEL`, and `GEMINI_TTS_MODEL` in `.env.example` are server-side only; never prefix with `NEXT_PUBLIC_`).
+Prerequisites: Node.js 24+ and npm. Zero keys are needed for `Sample Preview` or mock mode (`GEMINI_API_KEY`, `DEEPGRAM_API_KEY`, `KURO_TTS_PROVIDER`, `GEMINI_TEXT_MODEL`, `GEMINI_TTS_MODEL`, and `GEMINI_TTS_FALLBACK_MODEL` in `.env.example` stay server-side only; never `NEXT_PUBLIC_*`).
 
 ```bash
 npm install
@@ -40,6 +40,7 @@ npm run lint
 npm run test:schema
 npm run test:generation
 npm run test:tts
+npm run test:wav
 npm run test:audio-queue
 npm run build
 npm run start
@@ -49,11 +50,11 @@ npm run start
 
 | Member | Primary Tooling | Ownership |
 | --- | --- | --- |
-| Project Owner | Antigravity (`Neon` lead) | Product scope, architecture, frontend/integration, deploy, PR review, sole `main` merge authority |
-| Lucky | Claude Code (`Opus` -> `Sonnet` / `Fable`) | UI/UX research, wireframes, visual system, isolated UI branches, demo visuals |
-| JR | Codex (`Astra` -> `Sol` / `Terra`) | Episode contract, Zod schemas, Gemini/TTS spike, audio stitching, API routes, backend tests |
+| Project Owner (`Jendrick`) | Antigravity (`Neon` lead) | Scope, architecture, `WP-012.5`, frontend/integration, deploy, PR review, sole `main` merge authority |
+| Lucky (`Angel`) | Claude Code (`Opus` -> `Sonnet` / `Fable`) | UI/UX research, visual system, `WP-013` Kuromates/redesign, responsive/a11y polish, demo visuals |
+| JR (`John Rae`) | Codex (`Astra` -> `Sol` / `Terra`) | Contracts, schemas, Gemini/TTS pipeline, WAV stitching, `WP-016` reliability/recovery & tests |
 
-See [AGENTS.md](./AGENTS.md) and [CONTRIBUTING.md](./CONTRIBUTING.md) for branch rules, contributor onboarding, and handoff standards.
+See [AGENTS.md](./AGENTS.md) and [CONTRIBUTING.md](./CONTRIBUTING.md) for branch rules, onboarding, and handoff standards.
 
 ## Notice
 
