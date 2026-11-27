@@ -69,6 +69,16 @@ const {
   MIN_COOLDOWN_MS,
   parseRetryAfterMs,
 } = await import("../src/lib/tts/retry-after.ts");
+const {
+  createEpisodeBatchCompiler,
+  FALLBACK_TTS_CONCURRENCY,
+  PRIMARY_TTS_CONCURRENCY,
+  TTS_BATCH_SIZE,
+} = await import("../src/lib/tts/episode-batch-compiler.ts");
+const {
+  parseWavBuffer,
+  wrapPcm16MonoToWav,
+} = await import("../src/lib/tts/wav-stitcher.ts");
 
 let passed = 0;
 function check(condition, label) {
@@ -1150,12 +1160,477 @@ function createHarness(episode = makeTestEpisode(8), opts = {}) {
     const txt = fs.readFileSync(f, "utf8");
     return forbiddenPattern.test(txt) || /sessionstorage\.setitem/i.test(txt);
   });
-  const clientFiles = srcFiles.filter((f) => /[\\/](?:components|hooks)[\\/]/i.test(f));
-  const clientDeepgramRefs = clientFiles.filter((f) => /deepgram|deepgram-tts-client/i.test(fs.readFileSync(f, "utf8")));
+  const clientFiles = srcFiles.filter((f) => /[\\/](?:components|hooks)[\\/]|episode-batch-compiler\.ts$|wav-stitcher\.ts$/i.test(f));
+  const clientDeepgramRefs = clientFiles.filter((f) => /deepgram|deepgram-tts-client|aura-2-/i.test(fs.readFileSync(f, "utf8")));
   check(
     !pkgBad && srcBad.length === 0 && clientDeepgramRefs.length === 0,
     "[WP-011.5 Queue 13,14,15] Deepgram stays server-only; Azure/Kokoro/persistent storage remain excluded",
   );
+}
+
+// =========================================================================
+// WP-012 BATCH COMPILER TESTS (Sections 31, 32, 33: Quick, Detailed, Sample, No-Key)
+// =========================================================================
+function createBatchCompilerHarness(episode, opts = {}) {
+  let nowMs = 2_000_000;
+  let nextTimerId = 1;
+  const timers = new Map();
+  const pendingRequests = [];
+  const allRequests = [];
+  let seqUrl = 0;
+  const activeUrls = new Set();
+
+  let activeAudioCallbacks = null;
+  let currentSec = 0;
+  let loadedUrls = [];
+
+  const audioDriver = {
+    async loadAndPlay(url, startTimeSec, callbacks) {
+      loadedUrls.push({ url, startTimeSec });
+      currentSec = startTimeSec;
+      activeAudioCallbacks = callbacks;
+      callbacks.onPlay();
+      return { ok: true };
+    },
+    async resume(callbacks) {
+      if (callbacks) activeAudioCallbacks = callbacks;
+      activeAudioCallbacks?.onPlay();
+      return { ok: true };
+    },
+    seekTo(sec) {
+      currentSec = sec;
+      activeAudioCallbacks?.onTimeUpdate(sec);
+    },
+    pause() {
+      activeAudioCallbacks?.onPause();
+      return currentSec;
+    },
+    stop() {
+      currentSec = 0;
+    },
+    getCurrentTimeSec() {
+      return currentSec;
+    },
+    dispose() {
+      activeAudioCallbacks = null;
+    },
+  };
+
+  function makeWavForDuration(durationMs = 400) {
+    return wrapPcm16MonoToWav(new Uint8Array(durationMs * 24 * 2));
+  }
+
+  const controller = createEpisodeBatchCompiler(episode, {
+    source: opts.source ?? "generated",
+    sessionCircuit: opts.sessionCircuit,
+    audioDriver,
+    now: () => nowMs,
+    setTimeoutFn: (fn, ms) => {
+      const id = nextTimerId++;
+      timers.set(id, { id, runAt: nowMs + Math.max(0, ms), fn });
+      return id;
+    },
+    clearTimeoutFn: (id) => {
+      timers.delete(id);
+    },
+    urlApi: {
+      createObjectURL() {
+        seqUrl += 1;
+        const url = `blob:wp012-test/${seqUrl}`;
+        activeUrls.add(url);
+        return url;
+      },
+      revokeObjectURL(u) {
+        activeUrls.delete(u);
+      },
+    },
+    fetchSegmentAudio(payload, signal) {
+      const rec = {
+        payload,
+        signal,
+        startedAtMs: nowMs,
+        aborted: false,
+        resolve: null,
+      };
+      allRequests.push(rec);
+      pendingRequests.push(rec);
+      return new Promise((resolve) => {
+        rec.resolve = resolve;
+        signal.addEventListener(
+          "abort",
+          () => {
+            rec.aborted = true;
+            const idx = pendingRequests.indexOf(rec);
+            if (idx >= 0) pendingRequests.splice(idx, 1);
+            resolve({
+              ok: false,
+              httpStatus: 499,
+              errorCode: "TTS_GENERATION_FAILED",
+              message: "Cancelled",
+              retryable: false,
+            });
+          },
+          { once: true },
+        );
+      });
+    },
+  });
+
+  function resolveOne(segmentId, customResult) {
+    const idx = pendingRequests.findIndex((r) => r.payload.segmentId === segmentId);
+    if (idx < 0) throw new Error(`No pending request for ${segmentId}`);
+    const rec = pendingRequests.splice(idx, 1)[0];
+    if (customResult) {
+      rec.resolve(customResult);
+      return;
+    }
+    rec.resolve({
+      ok: true,
+      bytes: makeWavForDuration(400),
+      contentType: "audio/wav",
+      durationMs: 400,
+      fallbackUsed: false,
+      quotaClass: "none",
+      voiceIdentityId: rec.payload.voiceIdentityId,
+    });
+  }
+
+  function resolveAllPending(customPerSegment) {
+    while (pendingRequests.length > 0) {
+      const rec = pendingRequests[0];
+      resolveOne(rec.payload.segmentId, customPerSegment?.(rec));
+    }
+  }
+
+  async function advance(ms) {
+    await flushMicrotasks();
+    const target = nowMs + ms;
+    while (true) {
+      let earliest = null;
+      for (const t of timers.values()) {
+        if (t.runAt <= target && (!earliest || t.runAt < earliest.runAt)) earliest = t;
+      }
+      if (!earliest) break;
+      timers.delete(earliest.id);
+      nowMs = earliest.runAt;
+      earliest.fn();
+      await flushMicrotasks();
+    }
+    nowMs = target;
+    await flushMicrotasks();
+  }
+
+  return {
+    controller,
+    allRequests,
+    pendingRequests,
+    activeUrls,
+    loadedUrls,
+    makeWavForDuration,
+    getCallbacks: () => activeAudioCallbacks,
+    setTimeSec: (s) => { currentSec = s; },
+    resolveOne,
+    resolveAllPending,
+    advance,
+  };
+}
+
+// Section 31a: Quick 8-turn + 10-turn (partial final batch), concurrency <=4, Play/Download gated, retry preserves 7 valid clips
+{
+  check(
+    TTS_BATCH_SIZE === 4 && PRIMARY_TTS_CONCURRENCY === 4 && FALLBACK_TTS_CONCURRENCY === 1,
+    "[WP-012 Batch 00] Locked batch size 4, primary concurrency 4, fallback concurrency 1",
+  );
+
+  const ep8 = makeTestEpisode(8);
+  const h8 = createBatchCompilerHarness(ep8);
+  h8.controller.startCompilation();
+  await flushMicrotasks();
+
+  // First 4 dispatched concurrently, Play/Download still blocked
+  check(
+    h8.pendingRequests.length === 4 &&
+      h8.controller.getSnapshot().peakConcurrentRequests <= 4 &&
+      h8.controller.getSnapshot().canPlay === false &&
+      h8.controller.getSnapshot().canDownloadAudio === false,
+    "[WP-012 Quick 01] Concurrency capped at 4 and Play/Download disabled before completion",
+  );
+
+  // Turn 1-4 pass -> Batch 0 ready, BUT Quick still blocks Play until Batch 1 (turns 5-8) completes!
+  h8.resolveAllPending();
+  await flushMicrotasks();
+  const snapMid = h8.controller.getSnapshot();
+  check(
+    snapMid.completedTurns === 4 &&
+      snapMid.canPlay === false &&
+      snapMid.canDownloadAudio === false &&
+      h8.pendingRequests.length === 4,
+    "[WP-012 Quick 02] Quick 8-turn blocks Play/Download at 4 of 8 until 100% turns compile",
+  );
+
+  // Fail seg_06 twice (auto retry fails too) while seg_05, seg_07, seg_08 succeed
+  h8.resolveOne("seg_05");
+  h8.resolveOne("seg_07");
+  h8.resolveOne("seg_08");
+  h8.resolveOne("seg_06", {
+    ok: false,
+    httpStatus: 503,
+    errorCode: "TTS_PROVIDER_UNAVAILABLE",
+    message: "Temporary upstream outage",
+    retryable: true,
+  });
+  await h8.advance(350);
+  h8.resolveOne("seg_06", {
+    ok: false,
+    httpStatus: 503,
+    errorCode: "TTS_PROVIDER_UNAVAILABLE",
+    message: "Still busy",
+    retryable: true,
+  });
+  await flushMicrotasks();
+
+  const snapFail = h8.controller.getSnapshot();
+  const requestsBeforeRetry = h8.allRequests.length;
+  check(
+    snapFail.completedTurns === 7 &&
+      snapFail.canPlay === false &&
+      snapFail.compilationState === "failed-retryable" &&
+      snapFail.failedTurnIds.length === 1 &&
+      snapFail.failedTurnIds[0] === "seg_06",
+    "[WP-012 Quick 03] Single failed turn blocks readiness while keeping 7 valid clips intact",
+  );
+
+  // Targeted RetryFailedTurns requests ONLY seg_06 (preserves 7 valid clips)
+  h8.controller.retryFailedTurns();
+  await flushMicrotasks();
+  check(
+    h8.allRequests.length === requestsBeforeRetry + 1 &&
+      h8.pendingRequests[0].payload.segmentId === "seg_06",
+    "[WP-012 Quick 04] Targeted failed-turn retry re-requests only seg_06",
+  );
+
+  h8.resolveOne("seg_06");
+  await flushMicrotasks();
+  const snapReady = h8.controller.getSnapshot();
+  const fullBlob = h8.controller.getFullWavBlob();
+  const reparsed = parseWavBuffer(new Uint8Array(await fullBlob.arrayBuffer()));
+  check(
+    snapReady.canPlay === true &&
+      snapReady.canDownloadAudio === true &&
+      snapReady.compilationState === "complete" &&
+      reparsed.durationMs === snapReady.fullDurationMs &&
+      snapReady.timeline.length === 8,
+    "[WP-012 Quick 05] All 8 valid turns stitch full downloadable WAV matching timeline duration",
+  );
+
+  // Replay makes 0 TTS calls
+  const countBeforeReplay = h8.allRequests.length;
+  h8.controller.replay();
+  await flushMicrotasks();
+  check(
+    h8.allRequests.length === countBeforeReplay && h8.controller.getSnapshot().playbackStatus === "playing",
+    "[WP-012 Quick 06] Quick Replay makes zero new TTS requests",
+  );
+
+  h8.controller.cancel();
+  await flushMicrotasks();
+  check(
+    h8.activeUrls.size === 0 && h8.controller.getSnapshot().compilationState === "cancelled",
+    "[WP-012 Quick 07] Cancel releases all Blob URLs and stops work cleanly",
+  );
+  h8.controller.dispose();
+
+  // Quick 10-turn (2-turn final partial batch) + identity mismatch + fallback downshift
+  const ep10 = makeTestEpisode(10);
+  const h10 = createBatchCompilerHarness(ep10);
+  h10.controller.startCompilation();
+  await flushMicrotasks();
+  check(h10.controller.getSnapshot().totalBatches === 3 && h10.controller.getSnapshot().batches[2].totalTurns === 2, "[WP-012 Quick 08] 10-turn Quick creates 3 batches with 2-turn final batch");
+  // Identity mismatch rejects even on 200 WAV
+  h10.resolveOne("seg_01", {
+    ok: true,
+    bytes: h10.makeWavForDuration(400),
+    contentType: "audio/wav",
+    durationMs: 400,
+    fallbackUsed: false,
+    voiceIdentityId: "kuromate_wrong_identity_v1",
+  });
+  await flushMicrotasks();
+  check(h10.controller.getSnapshot().canPlay === false && h10.controller.getSnapshot().compilationState === "failed-blocking", "[WP-012 Quick 09] Identity mismatch blocks readiness permanently");
+  h10.controller.dispose();
+
+  // Fallback downshift keeps concurrency = 1 and pacing >= 1500ms permanently
+  const epFallback = makeTestEpisode(8);
+  const hFb = createBatchCompilerHarness(epFallback);
+  hFb.controller.startCompilation();
+  await flushMicrotasks();
+  hFb.resolveOne("seg_01", {
+    ok: true,
+    bytes: hFb.makeWavForDuration(400),
+    contentType: "audio/wav",
+    durationMs: 400,
+    fallbackUsed: true,
+    voiceIdentityId: hFb.allRequests[0].payload.voiceIdentityId,
+  });
+  hFb.resolveOne("seg_02");
+  hFb.resolveOne("seg_03");
+  hFb.resolveOne("seg_04");
+  await flushMicrotasks();
+  const sFb = hFb.controller.getSnapshot();
+  await hFb.advance(1600);
+  check(
+    sFb.providerFallbackActivated === true &&
+      sFb.effectiveConcurrency === 1 &&
+      hFb.pendingRequests.length === 1,
+    "[WP-012 Quick 10] Gemini fallback downshifts remaining compilation to concurrency 1 with 1500ms pacing",
+  );
+  hFb.controller.dispose();
+}
+
+// Section 32: Detailed 12/15-turn hybrid compilation, Batch 0 gate, NO AUDIO NO ADVANCE boundary, failed next batch, full WAV transition
+{
+  const ep15 = makeTestEpisode(15); // length === "detailed" -> 4 batches (4, 4, 4, 3)
+  const hDet = createBatchCompilerHarness(ep15);
+  hDet.controller.startCompilation();
+  await flushMicrotasks();
+
+  // Batch 0 incomplete -> canPlay false
+  hDet.resolveOne("seg_01");
+  hDet.resolveOne("seg_02");
+  hDet.resolveOne("seg_03");
+  await flushMicrotasks();
+  check(
+    hDet.controller.getSnapshot().canPlay === false && hDet.controller.getSnapshot().totalBatches === 4,
+    "[WP-012 Detailed 01] 15-turn Detailed blocks Play until all 4 opening turns pass",
+  );
+
+  // Resolve 4th turn -> Batch 0 ready! Play unlocks immediately & Batch 1 starts compiling in background
+  hDet.resolveOne("seg_04");
+  await flushMicrotasks();
+  const sB0 = hDet.controller.getSnapshot();
+  check(
+    sB0.canPlay === true &&
+      sB0.canDownloadAudio === false &&
+      sB0.batches[0].status === "ready" &&
+      hDet.pendingRequests.length === 4,
+    "[WP-012 Detailed 02] Opening 4-turn batch enables Play while remaining batches compile in background and Download stays disabled",
+  );
+
+  hDet.controller.startPodcast();
+  await flushMicrotasks();
+  const urlsBeforeBoundary = hDet.loadedUrls.length;
+
+  // Reach end of Batch 0 while Batch 1 is still compiling -> MUST pause at boundary (NO AUDIO, NO ADVANCE)
+  hDet.getCallbacks().onEnded();
+  await flushMicrotasks();
+  const sBuf = hDet.controller.getSnapshot();
+  check(
+    sBuf.isBufferingAtBoundary === true &&
+      sBuf.bufferingTurnRange === "5–8" &&
+      sBuf.playbackStatus === "paused" &&
+      sBuf.isSpeaking === false &&
+      hDet.loadedUrls.length === urlsBeforeBoundary,
+    "[WP-012 Detailed 03] Crossing incomplete Batch 1 halts cleanly at boundary with Preparing turns 5–8",
+  );
+
+  // Batch 1 completes -> resumes seamlessly on Batch 1 without restarting Batch 0
+  hDet.resolveAllPending();
+  await flushMicrotasks();
+  const sResumed = hDet.controller.getSnapshot();
+  check(
+    sResumed.isBufferingAtBoundary === false &&
+      sResumed.playbackStatus === "playing" &&
+      sResumed.activeBatchIndex === 1 &&
+      hDet.loadedUrls.length === urlsBeforeBoundary + 1,
+    "[WP-012 Detailed 04] Ready Batch 1 resumes automatically at Batch 1 offset without restarting episode",
+  );
+
+  // Resolve Batch 2 & fail seg_13 twice in Batch 3 -> hits boundary stop safely until retried
+  hDet.resolveAllPending(); // completes Batch 2 (turns 9-12)
+  await flushMicrotasks();
+  hDet.getCallbacks().onEnded(); // move Batch 1 -> Batch 2
+  await flushMicrotasks();
+  check(hDet.controller.getSnapshot().activeBatchIndex === 2 && hDet.loadedUrls.length === urlsBeforeBoundary + 2, "[WP-012 Detailed 05] Batch 2 transitions cleanly");
+
+  // Batch 3 now pending: fail segment 13 twice while 14 & 15 pass
+  const id13 = ep15.segments[12].id;
+  const id14 = ep15.segments[13].id;
+  const id15 = ep15.segments[14].id;
+  hDet.resolveOne(id14);
+  hDet.resolveOne(id15);
+  hDet.resolveOne(id13, { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Busy", retryable: true });
+  await hDet.advance(350);
+  hDet.resolveOne(id13, { ok: false, httpStatus: 503, errorCode: "TTS_PROVIDER_UNAVAILABLE", message: "Busy", retryable: true });
+  await flushMicrotasks();
+  hDet.getCallbacks().onEnded(); // hit failed Batch 3 boundary
+  await flushMicrotasks();
+  check(
+    hDet.controller.getSnapshot().boundaryFailedBatchIndex === 3 &&
+      hDet.controller.getSnapshot().canDownloadAudio === false &&
+      hDet.controller.getSnapshot().failedTurnIds[0] === id13,
+    "[WP-012 Detailed 06] Failed Batch 3 blocks boundary advance and keeps Download disabled",
+  );
+
+  // Retry only segment 13 -> completes full episode WAV without interrupting/restarting active batch index
+  const beforeRetryLen = hDet.allRequests.length;
+  hDet.controller.retryFailedTurns();
+  await flushMicrotasks();
+  check(hDet.allRequests.length === beforeRetryLen + 1 && hDet.pendingRequests[0].payload.segmentId === id13, "[WP-012 Detailed 07] Failed batch retry requests only failed segment 13");
+  hDet.resolveOne(id13);
+  await flushMicrotasks();
+  const sDone15 = hDet.controller.getSnapshot();
+  check(
+    sDone15.compilationState === "complete" &&
+      sDone15.canDownloadAudio === true &&
+      sDone15.timeline.length === 15 &&
+      sDone15.activeBatchIndex === 3,
+    "[WP-012 Detailed 08] Full 15-turn WAV stitches cleanly and unlocks Download without restarting audio",
+  );
+  hDet.controller.dispose();
+}
+
+// Section 33: Live no-key blocked (NO silent bypass) vs Sample Preview (0 calls, clearly labeled, replayable)
+{
+  const epNoKey = makeTestEpisode(4);
+  const hNoKey = createBatchCompilerHarness(epNoKey);
+  hNoKey.controller.startCompilation();
+  await flushMicrotasks();
+  hNoKey.resolveOne("seg_01", {
+    ok: false,
+    httpStatus: 503,
+    errorCode: "TTS_NOT_CONFIGURED",
+    message: "Live voice generation is not configured.",
+    retryable: false,
+  });
+  await flushMicrotasks();
+  const sNoKey = hNoKey.controller.getSnapshot();
+  check(
+    sNoKey.isConfigBlocked === true &&
+      sNoKey.canPlay === false &&
+      sNoKey.canDownloadAudio === false &&
+      sNoKey.compilationState === "failed-blocking",
+    "[WP-012 Sample/NoKey 01] Live 503 TTS_NOT_CONFIGURED blocks playback completely with zero silent bypass",
+  );
+  hNoKey.controller.dispose();
+
+  const epSample = makeTestEpisode(4);
+  const hSample = createBatchCompilerHarness(epSample, { source: "sample" });
+  hSample.controller.startCompilation();
+  await flushMicrotasks();
+  hSample.controller.play();
+  await hSample.advance(4500);
+  hSample.controller.replay();
+  await flushMicrotasks();
+  const sSample = hSample.controller.getSnapshot();
+  check(
+    sSample.isSamplePreview === true &&
+      hSample.allRequests.length === 0 &&
+      sSample.canDownloadAudio === false &&
+      sSample.hasStartedPodcast === true &&
+      sSample.replayCount === 1,
+    "[WP-012 Sample/NoKey 02] Sample Preview runs without live keys (0 TTS calls), disables WAV download, and replays cleanly",
+  );
+  hSample.controller.dispose();
 }
 
 console.log(`ALL ${passed} AUDIO QUEUE TESTS PASSED.`);
