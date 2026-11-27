@@ -14,6 +14,9 @@ export type { TtsQuotaClass };
 export const TTS_MAX_TEXT_CHARS = 320;
 export const TTS_MAX_REQUEST_BODY_BYTES = 4096;
 export const TTS_MAX_AUDIO_BYTES = 5 * 1024 * 1024;
+export const TTS_REQUIRED_SAMPLE_RATE_HZ = 24_000;
+export const TTS_REQUIRED_CHANNELS = 1;
+export const TTS_REQUIRED_BIT_DEPTH = 16;
 
 const identifierSchema = z
   .string()
@@ -112,6 +115,7 @@ export const TtsErrorCodeSchema = z.enum([
   "TTS_TIMEOUT",
   "TTS_PROVIDER_UNAVAILABLE",
   "TTS_AUDIO_INVALID",
+  "TTS_IDENTITY_MISMATCH",
   "TTS_GENERATION_FAILED",
   "INTERNAL_ERROR",
 ]);

@@ -69,12 +69,17 @@ const {
   PRIMARY_GEMINI_TTS_MODEL,
 } = await import("../src/lib/tts/gemini-tts-client.ts");
 const {
+  DEEPGRAM_RETRY_DEFAULT_DELAY_MS,
+  DEEPGRAM_RETRY_MAX_DELAY_MS,
   generateSegmentTts,
   isAllowedGeminiTtsFallbackModel,
+  isDeepgramTargetedRetryEligible,
+  MAX_DEEPGRAM_TARGETED_RETRIES,
   MAX_TTS_MODEL_CHOICES,
   MAX_TTS_MODEL_SWITCHES,
   MAX_TTS_PROVIDER_ATTEMPTS,
   MAX_TTS_REGENERATION_ATTEMPTS,
+  resolveDeepgramRetryDelayMs,
   resolveGeminiTtsFallbackModel,
 } = await import("../src/lib/tts/gemini-tts-service.ts");
 const { createObjectUrlManager } = await import("../src/lib/tts/object-url-manager.ts");
@@ -212,9 +217,10 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
     let geminiCalls = 0;
     const switched = await handleTtsPost(makeJsonRequest(req), {
       env,
+      sleepFn: async () => {},
       deepgramTransport: async () => {
         deepgramCalls += 1;
-        throw { status, headers: new Headers(status === 429 ? { "Retry-After": "30" } : {}) };
+        throw { status, headers: new Headers(status === 429 ? { "Retry-After": "1" } : {}) };
       },
       transport: async (call) => {
         geminiCalls += 1;
@@ -223,10 +229,125 @@ const VALID_WAV_B64 = makeSyntheticWavBase64({ durationMs: 1250, includeExtraJun
       },
     });
     check(
-      switched.status === 200 && deepgramCalls === 1 && geminiCalls === 1 &&
+      switched.status === 200 &&
+        deepgramCalls === 2 &&
+        geminiCalls === 1 &&
+        switched.headers.get("x-kuro-tts-retry-used") === "true" &&
         switched.headers.get("x-kuro-tts-fallback-used") === "true" &&
-        switched.headers.get("x-kuro-provider-attempts") === "2",
-      `Deepgram ${status} performs one bounded switch to Gemini`,
+        switched.headers.get("x-kuro-tts-provider") === "gemini" &&
+        switched.headers.get("x-kuro-provider-attempts") === "3" &&
+        Boolean(switched.headers.get("x-kuro-request-id")),
+      `Deepgram ${status} tries once more on Deepgram then switches once to Gemini (max 3 total)`,
+    );
+  }
+
+  // WP-012 Section 8 & 29: Deepgram targeted retry (1 retry -> Deepgram success), incomplete WAV retry,
+  // hard-stops (401/403/400/oversize/long_quota_wait/abort), Retry-After bounds, and Deepgram telemetry
+  {
+    let dgTransientThenOk = 0;
+    const retryThenSuccess = await handleTtsPost(makeJsonRequest(req), {
+      env,
+      sleepFn: async () => {},
+      deepgramTransport: async () => {
+        dgTransientThenOk += 1;
+        if (dgTransientThenOk === 1) throw { status: 503 };
+        return { bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" };
+      },
+      transport: async () => {
+        throw new Error("Gemini fallback should not run when Deepgram retry succeeds");
+      },
+    });
+    check(
+      retryThenSuccess.status === 200 &&
+        dgTransientThenOk === 2 &&
+        retryThenSuccess.headers.get("x-kuro-tts-retry-used") === "true" &&
+        retryThenSuccess.headers.get("x-kuro-tts-fallback-used") === "false" &&
+        retryThenSuccess.headers.get("x-kuro-tts-provider") === "deepgram" &&
+        retryThenSuccess.headers.get("x-kuro-provider-attempts") === "2",
+      "[WP-012 Server 01] Deepgram transient 503 retries once and succeeds without Gemini fallback",
+    );
+
+    // Twice empty WAV retries once on Deepgram and fails without calling Gemini fallback
+    let emptyCalls = 0;
+    let emptyGeminiCalls = 0;
+    const twiceEmpty = await handleTtsPost(makeJsonRequest(req), {
+      env,
+      sleepFn: async () => {},
+      deepgramTransport: async () => {
+        emptyCalls += 1;
+        return { bytes: Buffer.alloc(10), mimeType: "audio/wav" };
+      },
+      transport: async () => {
+        emptyGeminiCalls += 1;
+        return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+      },
+    });
+    check(
+      twiceEmpty.status === 502 && emptyCalls === 2 && emptyGeminiCalls === 0,
+      "[WP-012 Server 02] Truncated Deepgram WAV retries once without falsely switching to Gemini",
+    );
+
+    // Hard-stops: 403, 400, 429 long_quota_wait, oversized audio -> 0 retry, 0 fallback
+    for (const badCase of [
+      { label: "403", fn: async () => { throw { status: 403 }; }, expectStatus: 502 },
+      { label: "400", fn: async () => { throw { status: 400 }; }, expectStatus: 502 },
+      { label: "long_quota_wait", fn: async () => { throw { status: 429, headers: new Headers({ "Retry-After": "3600" }) }; }, expectStatus: 429 },
+      { label: "oversized", fn: async () => ({ bytes: Buffer.alloc(6 * 1024 * 1024), mimeType: "audio/wav" }), expectStatus: 502 },
+    ]) {
+      let cDg = 0;
+      let cGem = 0;
+      const rHard = await handleTtsPost(makeJsonRequest(req), {
+        env,
+        sleepFn: async () => {},
+        deepgramTransport: async () => {
+          cDg += 1;
+          return badCase.fn();
+        },
+        transport: async () => {
+          cGem += 1;
+          return { base64Data: VALID_WAV_B64, mimeType: "audio/wav" };
+        },
+      });
+      check(
+        rHard.status === badCase.expectStatus && cDg === 1 && cGem === 0,
+        `[WP-012 Server 03] Hard-stop ${badCase.label} makes 1 attempt, 0 retries, and 0 fallback calls`,
+      );
+    }
+
+    // Abort during sleep stops cleanly with 0 extra calls
+    const ac = new AbortController();
+    let abortCalls = 0;
+    const sleepTriggerAbort = generateSegmentTts(req, {
+      env,
+      signal: ac.signal,
+      deepgramTransport: async () => {
+        abortCalls += 1;
+        ac.abort();
+        throw { status: 503 };
+      },
+    });
+    const abortedRes = await sleepTriggerAbort;
+    const delayDefault = resolveDeepgramRetryDelayMs({ kind: "service_unavailable", retryable: true, quotaClass: "none", retryAfterSeconds: undefined });
+    const delayClampedMax = resolveDeepgramRetryDelayMs({ kind: "rate_limited", retryable: true, quotaClass: "short_cooldown", retryAfterSeconds: 30 });
+    const dgTelemetryResult = await generateSegmentTts(req, {
+      env,
+      requestId: "req_telemetry_1",
+      deepgramTransport: async () => ({ bytes: buildPcm16MonoWav(pcm), mimeType: "audio/wav" }),
+    });
+    check(
+      !abortedRes.ok &&
+        abortedRes.httpStatus === 499 &&
+        abortCalls === 1 &&
+        MAX_DEEPGRAM_TARGETED_RETRIES === 1 &&
+        delayDefault === DEEPGRAM_RETRY_DEFAULT_DELAY_MS &&
+        delayClampedMax === DEEPGRAM_RETRY_MAX_DELAY_MS &&
+        isDeepgramTargetedRetryEligible({ kind: "service_unavailable", retryable: true, quotaClass: "none" }) &&
+        dgTelemetryResult.ok &&
+        dgTelemetryResult.meta.requestedProvider === "deepgram" &&
+        dgTelemetryResult.meta.resolvedProvider === "deepgram" &&
+        dgTelemetryResult.meta.requestedModel === "aura-2-thalia-en" &&
+        dgTelemetryResult.meta.resolvedModel === "aura-2-thalia-en",
+      "[WP-012 Server 04] Abort stops backoff, Retry-After clamps <=2000ms, and Deepgram telemetry names Deepgram accurately",
     );
   }
 
