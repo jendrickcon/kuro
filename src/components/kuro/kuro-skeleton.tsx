@@ -17,7 +17,7 @@ import { GenerationStatus } from "@/components/kuro/generation-status";
 import { EpisodePlayer } from "@/components/kuro/player/episode-player";
 import { getSampleEpisode } from "@/lib/episode/fixtures";
 import {
-  deriveUnifiedLoadingView,
+  deriveBatchUnifiedLoadingView,
   type ScriptLoadingPhase,
 } from "@/lib/episode/unified-loading-state";
 import { useEpisodeAudioQueue } from "@/hooks/use-episode-audio-queue";
@@ -57,13 +57,14 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
   const errorCardRef = useRef<HTMLDivElement | null>(null);
 
   const queue = useEpisodeAudioQueue(result?.episode ?? null, {
+    source: result?.source ?? "generated",
     minRequestIntervalMs: ttsRequestIntervalMs,
   });
 
-  const loadingView = deriveUnifiedLoadingView({
+  const loadingView = deriveBatchUnifiedLoadingView({
     scriptPhase,
     episode: result?.episode ?? null,
-    queueSnapshot: queue.snapshot,
+    compilerSnapshot: queue.snapshot,
     hostCount,
   });
 
@@ -141,9 +142,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
         body: JSON.stringify(requestCheck.data),
       });
 
-      if (controller.signal.aborted) {
-        return;
-      }
+      if (controller.signal.aborted) return;
 
       setScriptPhase("validating");
 
@@ -167,9 +166,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
         window.requestAnimationFrame(() => resolve());
       });
 
-      if (controller.signal.aborted) {
-        return;
-      }
+      if (controller.signal.aborted) return;
 
       const parsed = CreateEpisodeResponseSchema.safeParse(json);
       if (!parsed.success) {
@@ -220,9 +217,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
         requestedOptions: { tone, length, hostCount },
       });
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return;
-      }
+      if (err instanceof DOMException && err.name === "AbortError") return;
       if (!controller.signal.aborted) {
         setScriptPhase("idle");
         setRequestError({
@@ -258,7 +253,7 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
     scriptAbortRef.current = null;
     isSubmittingRef.current = false;
     setScriptPhase("idle");
-    queue.cancelPreparation();
+    queue.cancel();
     queue.dispose();
     setResult(null);
     focusTextarea();
@@ -282,11 +277,8 @@ export function KuroSkeleton({ ttsRequestIntervalMs }: KuroSkeletonProps = {}) {
       <GenerationStatus
         view={loadingView}
         episode={result?.episode ?? null}
-        queueSnapshot={queue.snapshot}
         onStartPodcast={queue.startPodcast}
-        onStartWithAvailableAudioAndCaptions={queue.startWithCaptionsAndAvailableAudio}
-        onContinuePreparingVoices={queue.retryPreparation}
-        onContinueWithTimedCaptions={queue.continueWithTimedCaptions}
+        onRetryFailedTurns={queue.retryFailedTurns}
         onCancelAndEdit={handleCancelOrBack}
       />
     );

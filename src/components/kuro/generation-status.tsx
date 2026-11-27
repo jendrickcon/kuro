@@ -1,67 +1,53 @@
 "use client";
 
 import type { Episode } from "@contracts/episode.schema";
-import type { UnifiedLoadingView } from "@/lib/episode/unified-loading-state";
-import type { EpisodeAudioQueueSnapshot } from "@/lib/tts/episode-audio-queue-engine";
+import type { BatchLoadingView } from "@/lib/episode/unified-loading-state";
 
 const LOADING_STEPS = [
   { step: 1, title: "Preparing your conversation" },
   { step: 2, title: "Checking the conversation" },
-  { step: 3, title: "Preparing the opening voices" },
+  { step: 3, title: "Compiling Kuromate voices" },
   { step: 4, title: "Ready to begin" },
 ] as const;
 
 export interface GenerationStatusProps {
-  view: UnifiedLoadingView;
+  view: BatchLoadingView;
   episode: Episode | null;
-  queueSnapshot: EpisodeAudioQueueSnapshot | null;
   onStartPodcast: () => void;
-  onStartWithAvailableAudioAndCaptions: () => void;
-  onContinuePreparingVoices: () => void;
-  onContinueWithTimedCaptions: () => void;
+  onRetryFailedTurns: () => void;
   onCancelAndEdit: () => void;
 }
 
 /**
  * Single continuous loading panel covering script creation, EpisodeSchema validation,
- * sequential opening-voice preparation, compact idle Kuromates preview, and Start podcast trigger.
+ * Quick full / Detailed Batch-1 compilation progress, and honest Retry / Cancel actions.
  */
 export function GenerationStatus({
   view,
   episode,
-  queueSnapshot,
   onStartPodcast,
-  onStartWithAvailableAudioAndCaptions,
-  onContinuePreparingVoices,
-  onContinueWithTimedCaptions,
+  onRetryFailedTurns,
   onCancelAndEdit,
 }: GenerationStatusProps) {
   const isBusy =
     view.stage === "generating_script" ||
     view.stage === "validating_script" ||
-    view.stage === "preparing_audio" ||
-    view.stage === "audio_cooldown";
-  const cooldownActive = queueSnapshot?.cooldownActive ?? false;
-  const cooldownSecs = cooldownActive
-    ? Math.max(1, Math.ceil((queueSnapshot?.cooldownRemainingMs ?? 0) / 1000))
-    : 0;
+    view.stage === "compiling_quick" ||
+    view.stage === "compiling_opening";
 
-  let badgeText = "Working";
+  let badgeText = "Compiling";
   let badgeClass = "border-blue-300 bg-white text-blue-950";
-  if (view.stage === "audio_ready") {
+  if (view.stage === "ready_to_play") {
     badgeText = "Ready to begin";
     badgeClass = "border-emerald-300 bg-emerald-50 text-emerald-950";
-  } else if (view.stage === "audio_partial") {
-    badgeText = "Partial voices";
+  } else if (view.stage === "failed_retryable") {
+    badgeText = "Retry required";
     badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
-  } else if (view.stage === "audio_cooldown") {
-    badgeText = "Rate limit wait";
+  } else if (view.stage === "failed_blocking") {
+    badgeText = view.isConfigBlocked ? "Setup required" : "Unavailable";
     badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
-  } else if (view.stage === "audio_unavailable") {
-    badgeText = view.isLongQuotaWait ? "Hosted voice limit reached" : "Voice unavailable";
-    badgeClass = "border-amber-300 bg-amber-50 text-amber-950";
-  } else if (view.stage === "audio_cancelled") {
-    badgeText = "Paused";
+  } else if (view.stage === "cancelled") {
+    badgeText = "Cancelled";
     badgeClass = "border-slate-300 bg-slate-100 text-slate-900";
   }
 
@@ -80,9 +66,9 @@ export function GenerationStatus({
             className={`inline-block h-3 w-3 shrink-0 rounded-full ${
               isBusy
                 ? "bg-blue-700 animate-pulse motion-reduce:animate-none"
-                : view.stage === "audio_ready"
+                : view.stage === "ready_to_play"
                   ? "bg-emerald-600"
-                  : view.stage === "audio_partial" || view.stage === "audio_unavailable"
+                  : view.stage === "failed_retryable" || view.stage === "failed_blocking"
                     ? "bg-amber-600"
                     : "bg-slate-500"
             }`}
@@ -103,13 +89,9 @@ export function GenerationStatus({
       >
         {LOADING_STEPS.map((item) => {
           const isComplete =
-            view.stage === "audio_ready"
-              ? true
-              : view.stage === "audio_partial"
-                ? item.step <= 3
-                : view.stepNumber > item.step;
+            view.stage === "ready_to_play" ? true : view.stepNumber > item.step;
           const isCurrent =
-            view.stage === "audio_ready" ? item.step === 4 : view.stepNumber === item.step;
+            view.stage === "ready_to_play" ? item.step === 4 : view.stepNumber === item.step;
 
           return (
             <li
@@ -149,16 +131,8 @@ export function GenerationStatus({
         <p className="mt-0.5 text-sm font-medium text-slate-800 break-words">{view.statusText}</p>
         {view.fallbackNotice ? (
           <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs text-blue-950">
-            {view.fallbackNoticeTitle ? (
-              <p className="font-extrabold">{view.fallbackNoticeTitle}</p>
-            ) : null}
             <p className="font-semibold">{view.fallbackNotice}</p>
           </div>
-        ) : null}
-        {view.countdownText ? (
-          <p className="mt-1 text-xs font-semibold tabular-nums text-amber-900">
-            {view.countdownText}
-          </p>
         ) : null}
         <p className="mt-1 text-xs font-semibold tabular-nums text-slate-700">
           {view.voiceCountText}
@@ -170,7 +144,7 @@ export function GenerationStatus({
         aria-label="Kuromates preview"
         className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs text-slate-700"
       >
-        <span className="font-semibold text-slate-800">{view.hostCount} Kuromates · Idle preview</span>
+        <span className="font-semibold text-slate-800">{view.hostCount} Kuromates · Cast</span>
         <div className="flex flex-wrap items-center gap-1.5">
           {hostsPreview.length > 0
             ? hostsPreview.map((host) => (
@@ -204,9 +178,7 @@ export function GenerationStatus({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2.5">
-        {view.stage !== "audio_partial" &&
-        view.stage !== "audio_unavailable" &&
-        view.stage !== "audio_cancelled" ? (
+        {view.stage !== "failed_retryable" && view.stage !== "failed_blocking" ? (
           <button
             type="button"
             disabled={!view.canStartPodcast}
@@ -217,72 +189,13 @@ export function GenerationStatus({
           </button>
         ) : null}
 
-        {view.stage === "audio_partial" ? (
-          <>
-            <button
-              type="button"
-              disabled={!view.canStartPartial}
-              onClick={onStartWithAvailableAudioAndCaptions}
-              className="min-h-11 rounded-xl bg-blue-700 px-4 py-2 text-sm font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700"
-            >
-              Start with available audio and captions
-            </button>
-            {view.canRetryAudio ? (
-              <button
-                type="button"
-                disabled={cooldownActive}
-                onClick={onContinuePreparingVoices}
-                className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {cooldownActive
-                  ? `Preparing more voices in ${cooldownSecs}s`
-                  : "Continue preparing voices"}
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
-        {view.stage === "audio_unavailable" ? (
-          <>
-            <button
-              type="button"
-              onClick={onContinueWithTimedCaptions}
-              className="min-h-11 rounded-xl bg-blue-700 px-4 py-2 text-sm font-extrabold text-white hover:bg-blue-800"
-            >
-              Continue with timed captions
-            </button>
-            {!view.isPermanentUnavailable && view.canRetryAudio ? (
-              <button
-                type="button"
-                disabled={cooldownActive}
-                onClick={onContinuePreparingVoices}
-                className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {cooldownActive
-                  ? `Retry available in ${cooldownSecs}s`
-                  : "Retry hosted voices"}
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
-        {view.stage === "audio_cooldown" ? (
+        {view.canRetry ? (
           <button
             type="button"
-            onClick={onContinueWithTimedCaptions}
-            className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50"
-          >
-            Continue with timed captions
-          </button>
-        ) : null}
-
-        {view.stage === "audio_cancelled" && view.canRetryAudio ? (
-          <button
-            type="button"
-            onClick={onContinuePreparingVoices}
+            onClick={onRetryFailedTurns}
             className="min-h-11 rounded-xl bg-blue-700 px-4 py-2 text-sm font-extrabold text-white hover:bg-blue-800"
           >
-            Continue preparing voices
+            {view.isConfigBlocked ? "Retry" : "Retry failed turn"}
           </button>
         ) : null}
 
@@ -291,9 +204,7 @@ export function GenerationStatus({
           onClick={onCancelAndEdit}
           className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50"
         >
-          {view.stage === "audio_unavailable" && view.isPermanentUnavailable
-            ? "Return to form"
-            : "Cancel and edit"}
+          Cancel and edit
         </button>
       </div>
     </section>

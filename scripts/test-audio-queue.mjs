@@ -45,7 +45,7 @@ module.registerHooks({
   },
 });
 
-const { deriveUnifiedLoadingView } = await import("../src/lib/episode/unified-loading-state.ts");
+const { deriveBatchUnifiedLoadingView, deriveUnifiedLoadingView } = await import("../src/lib/episode/unified-loading-state.ts");
 const {
   buildSegmentCacheKey,
   createEpisodeAudioQueueEngine,
@@ -1630,7 +1630,45 @@ function createBatchCompilerHarness(episode, opts = {}) {
       sSample.replayCount === 1,
     "[WP-012 Sample/NoKey 02] Sample Preview runs without live keys (0 TTS calls), disables WAV download, and replays cleanly",
   );
+
+  // Batch loading UI state mapping checks (Quick vs Detailed vs No-Key vs Sample Preview)
+  const vSampleUi = deriveBatchUnifiedLoadingView({
+    scriptPhase: "idle",
+    episode: epSample,
+    compilerSnapshot: sSample,
+    hostCount: 2,
+  });
   hSample.controller.dispose();
+
+  const hNoKeyUi = createBatchCompilerHarness(makeTestEpisode(4));
+  hNoKeyUi.controller.startCompilation();
+  await flushMicrotasks();
+  hNoKeyUi.resolveOne("seg_01", {
+    ok: false,
+    httpStatus: 503,
+    errorCode: "TTS_NOT_CONFIGURED",
+    message: "Missing key",
+    retryable: false,
+  });
+  await flushMicrotasks();
+  const vNoKeyUi = deriveBatchUnifiedLoadingView({
+    scriptPhase: "idle",
+    episode: makeTestEpisode(4),
+    compilerSnapshot: hNoKeyUi.controller.getSnapshot(),
+    hostCount: 2,
+  });
+  hNoKeyUi.controller.dispose();
+
+  check(
+    vSampleUi.showFullStudio === true &&
+      vSampleUi.showLoadingPanel === false &&
+      vNoKeyUi.stage === "failed_blocking" &&
+      vNoKeyUi.isConfigBlocked === true &&
+      vNoKeyUi.canRetry === true &&
+      vNoKeyUi.canStartPodcast === false &&
+      vNoKeyUi.statusText.includes("Live voice generation is not configured"),
+    "[WP-012 UI View 01] deriveBatchUnifiedLoadingView maps Sample studio and No-Key blocking states accurately",
+  );
 }
 
 console.log(`ALL ${passed} AUDIO QUEUE TESTS PASSED.`);

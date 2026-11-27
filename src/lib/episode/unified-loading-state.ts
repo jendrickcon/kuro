@@ -1,4 +1,5 @@
 import type { Episode } from "@contracts/episode.schema";
+import type { EpisodeBatchCompilerSnapshot } from "@/lib/tts/episode-batch-compiler";
 import type { EpisodeAudioQueueSnapshot } from "@/lib/tts/episode-audio-queue-engine";
 import { INITIAL_AUDIO_BUFFER_SIZE } from "@/lib/tts/tts-pacing-config";
 
@@ -39,6 +40,7 @@ export interface UnifiedLoadingView {
   hostCount: 2 | 3;
 }
 
+/** Legacy WP-011 view derivation kept intact for WP-011/WP-011.5 queue engine unit tests. */
 export function deriveUnifiedLoadingView(input: {
   scriptPhase: ScriptLoadingPhase;
   episode: Episode | null;
@@ -198,7 +200,6 @@ export function deriveUnifiedLoadingView(input: {
         isPermanentUnavailable: false,
         hostCount: effectiveHostCount,
       };
-
     case "cooldown":
       return {
         stage: "audio_cooldown",
@@ -225,7 +226,6 @@ export function deriveUnifiedLoadingView(input: {
         isPermanentUnavailable: false,
         hostCount: effectiveHostCount,
       };
-
     case "partial":
       return {
         stage: "audio_partial",
@@ -253,17 +253,12 @@ export function deriveUnifiedLoadingView(input: {
         isPermanentUnavailable: isAllHostedExhausted,
         hostCount: effectiveHostCount,
       };
-
     case "unavailable": {
       const permanentOutage =
         isAllHostedExhausted ||
         queueSnapshot.outageState === "config_error" ||
         queueSnapshot.outageState === "auth_error" ||
         !queueSnapshot.canRetryPreparation;
-      const isGenericOutage =
-        !isAllHostedExhausted &&
-        queueSnapshot.outageState === "provider_outage";
-
       return {
         stage: "audio_unavailable",
         showLoadingPanel: true,
@@ -274,15 +269,11 @@ export function deriveUnifiedLoadingView(input: {
           ? "Hosted voice limit reached for today"
           : permanentOutage
             ? "Hosted voices unavailable"
-            : isGenericOutage
-              ? "Hosted voices are temporarily unavailable"
-              : "Hosted voices are temporarily unavailable",
+            : "Hosted voices are temporarily unavailable",
         statusText: isAllHostedExhausted
           ? "Kuro’s available hosted voice options have reached today’s project limit. The conversation can continue with captions."
-          : isGenericOutage
-            ? "Your conversation is safe. Continue with captions or try again later."
-            : queueSnapshot.preparationMessage ??
-              "Your conversation is safe. Continue with captions or try again later.",
+          : queueSnapshot.preparationMessage ??
+            "Your conversation is safe. Continue with captions or try again later.",
         countdownText: isAllHostedExhausted ? null : countdownText,
         fallbackNoticeTitle,
         fallbackNotice,
@@ -298,7 +289,6 @@ export function deriveUnifiedLoadingView(input: {
         hostCount: effectiveHostCount,
       };
     }
-
     case "cancelled":
       return {
         stage: "audio_cancelled",
@@ -325,9 +315,6 @@ export function deriveUnifiedLoadingView(input: {
         isPermanentUnavailable: isAllHostedExhausted,
         hostCount: effectiveHostCount,
       };
-
-    case "idle":
-    case "preparing":
     default: {
       const turnNum =
         queueSnapshot.activePreparingTurnNumber ?? Math.min(target, ready + 1);
@@ -355,4 +342,265 @@ export function deriveUnifiedLoadingView(input: {
       };
     }
   }
+}
+
+export type BatchLoadingStage =
+  | "idle"
+  | "generating_script"
+  | "validating_script"
+  | "compiling_quick"
+  | "compiling_opening"
+  | "ready_to_play"
+  | "failed_retryable"
+  | "failed_blocking"
+  | "cancelled"
+  | "studio_active";
+
+export interface BatchLoadingView {
+  stage: BatchLoadingStage;
+  showLoadingPanel: boolean;
+  showFullStudio: boolean;
+  panelTitle: "Preparing your conversation";
+  stepNumber: 1 | 2 | 3 | 4;
+  stepHeading: string;
+  statusText: string;
+  fallbackNotice: string | null;
+  voicesReadyCount: number;
+  voicesTargetCount: number;
+  voiceCountText: string;
+  canStartPodcast: boolean;
+  canRetry: boolean;
+  isConfigBlocked: boolean;
+  hostCount: 2 | 3;
+}
+
+/** WP-012 unified loading view enforcing strict Quick (100%) and Detailed (4-turn Batch 1) audio gates. */
+export function deriveBatchUnifiedLoadingView(input: {
+  scriptPhase: ScriptLoadingPhase;
+  episode: Episode | null;
+  compilerSnapshot: EpisodeBatchCompilerSnapshot | null;
+  hostCount: 2 | 3;
+}): BatchLoadingView {
+  const { scriptPhase, episode, compilerSnapshot, hostCount } = input;
+  const fallbackTarget = INITIAL_AUDIO_BUFFER_SIZE;
+
+  if (scriptPhase === "generating") {
+    return {
+      stage: "generating_script",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 1,
+      stepHeading: "Preparing your conversation",
+      statusText: "Building the Kuromate discussion...",
+      fallbackNotice: null,
+      voicesReadyCount: 0,
+      voicesTargetCount: fallbackTarget,
+      voiceCountText: "Compiling voices: 0 ready",
+      canStartPodcast: false,
+      canRetry: false,
+      isConfigBlocked: false,
+      hostCount,
+    };
+  }
+
+  if (scriptPhase === "validating") {
+    return {
+      stage: "validating_script",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 2,
+      stepHeading: "Checking the conversation",
+      statusText: "Validating the episode structure and host turns...",
+      fallbackNotice: null,
+      voicesReadyCount: 0,
+      voicesTargetCount: fallbackTarget,
+      voiceCountText: "Compiling voices: 0 ready",
+      canStartPodcast: false,
+      canRetry: false,
+      isConfigBlocked: false,
+      hostCount,
+    };
+  }
+
+  if (!episode || !compilerSnapshot) {
+    return {
+      stage: "idle",
+      showLoadingPanel: false,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 1,
+      stepHeading: "Preparing your conversation",
+      statusText: "Ready to create an episode.",
+      fallbackNotice: null,
+      voicesReadyCount: 0,
+      voicesTargetCount: fallbackTarget,
+      voiceCountText: "Compiling voices: 0 ready",
+      canStartPodcast: false,
+      canRetry: false,
+      isConfigBlocked: false,
+      hostCount,
+    };
+  }
+
+  const effectiveHostCount: 2 | 3 = episode.hosts.length === 3 ? 3 : 2;
+  const isQuick = episode.length === "quick";
+  const ready = isQuick
+    ? compilerSnapshot.completedTurns
+    : compilerSnapshot.openingBatchReadyCount;
+  const target = isQuick
+    ? compilerSnapshot.totalTurns
+    : compilerSnapshot.openingBatchTotalCount;
+  const voiceCountText = isQuick
+    ? `Compiling voices: ${ready} of ${target} ready`
+    : `Compiling opening voices: ${ready} of ${target} ready`;
+  const fallbackNotice = compilerSnapshot.providerFallbackActivated
+    ? "An alternate hosted Kuromate voice option is active for reliability."
+    : null;
+
+  if (compilerSnapshot.isSamplePreview || compilerSnapshot.hasStartedPodcast) {
+    return {
+      stage: "studio_active",
+      showLoadingPanel: false,
+      showFullStudio: true,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 4,
+      stepHeading: "Ready to begin",
+      statusText: "Studio active",
+      fallbackNotice,
+      voicesReadyCount: ready,
+      voicesTargetCount: target,
+      voiceCountText,
+      canStartPodcast: false,
+      canRetry: false,
+      isConfigBlocked: false,
+      hostCount: effectiveHostCount,
+    };
+  }
+
+  if (compilerSnapshot.isConfigBlocked) {
+    return {
+      stage: "failed_blocking",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 3,
+      stepHeading: "Live voice generation is not configured",
+      statusText:
+        "Live voice generation is not configured. Add a supported server-side TTS key, then retry.",
+      fallbackNotice,
+      voicesReadyCount: ready,
+      voicesTargetCount: target,
+      voiceCountText,
+      canStartPodcast: false,
+      canRetry: true,
+      isConfigBlocked: true,
+      hostCount: effectiveHostCount,
+    };
+  }
+
+  if (compilerSnapshot.compilationState === "failed-blocking") {
+    return {
+      stage: "failed_blocking",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 3,
+      stepHeading: "Hosted voices unavailable",
+      statusText:
+        compilerSnapshot.failureMessage ??
+        "Required audio could not be compiled. Check configuration or try again later.",
+      fallbackNotice,
+      voicesReadyCount: ready,
+      voicesTargetCount: target,
+      voiceCountText,
+      canStartPodcast: false,
+      canRetry: compilerSnapshot.hasRetryableFailure,
+      isConfigBlocked: false,
+      hostCount: effectiveHostCount,
+    };
+  }
+
+  if (compilerSnapshot.compilationState === "failed-retryable") {
+    return {
+      stage: "failed_retryable",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 3,
+      stepHeading: "Audio compilation paused",
+      statusText:
+        compilerSnapshot.failureMessage ??
+        "One or more turns failed to compile. Retry the failed turn(s) while keeping completed audio.",
+      fallbackNotice,
+      voicesReadyCount: ready,
+      voicesTargetCount: target,
+      voiceCountText,
+      canStartPodcast: false,
+      canRetry: true,
+      isConfigBlocked: false,
+      hostCount: effectiveHostCount,
+    };
+  }
+
+  if (compilerSnapshot.canPlay) {
+    return {
+      stage: "ready_to_play",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 4,
+      stepHeading: "Ready to begin",
+      statusText: isQuick
+        ? "All episode voices and downloadable WAV audio are ready."
+        : "Opening 4 voices are ready. Remaining batches compile smoothly in the background.",
+      fallbackNotice,
+      voicesReadyCount: ready,
+      voicesTargetCount: target,
+      voiceCountText,
+      canStartPodcast: true,
+      canRetry: false,
+      isConfigBlocked: false,
+      hostCount: effectiveHostCount,
+    };
+  }
+
+  if (compilerSnapshot.compilationState === "cancelled") {
+    return {
+      stage: "cancelled",
+      showLoadingPanel: true,
+      showFullStudio: false,
+      panelTitle: "Preparing your conversation",
+      stepNumber: 3,
+      stepHeading: "Compilation cancelled",
+      statusText: "Voice compilation stopped cleanly.",
+      fallbackNotice,
+      voicesReadyCount: ready,
+      voicesTargetCount: target,
+      voiceCountText,
+      canStartPodcast: false,
+      canRetry: false,
+      isConfigBlocked: false,
+      hostCount: effectiveHostCount,
+    };
+  }
+
+  return {
+    stage: isQuick ? "compiling_quick" : "compiling_opening",
+    showLoadingPanel: true,
+    showFullStudio: false,
+    panelTitle: "Preparing your conversation",
+    stepNumber: 3,
+    stepHeading: isQuick ? "Compiling episode voices" : "Compiling opening voices",
+    statusText: voiceCountText,
+    fallbackNotice,
+    voicesReadyCount: ready,
+    voicesTargetCount: target,
+    voiceCountText,
+    canStartPodcast: false,
+    canRetry: false,
+    isConfigBlocked: false,
+    hostCount: effectiveHostCount,
+  };
 }
