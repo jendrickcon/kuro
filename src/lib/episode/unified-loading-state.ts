@@ -356,6 +356,14 @@ export type BatchLoadingStage =
   | "cancelled"
   | "studio_active";
 
+export type BroadcastBeatId =
+  | "idle"
+  | "studio_power_up"
+  | "cast_arrival"
+  | "mics_live"
+  | "ready_to_broadcast"
+  | "recovery_hold";
+
 export interface BatchLoadingView {
   stage: BatchLoadingStage;
   showLoadingPanel: boolean;
@@ -372,6 +380,11 @@ export interface BatchLoadingView {
   canRetry: boolean;
   isConfigBlocked: boolean;
   hostCount: 2 | 3;
+  broadcastBeatNumber: 1 | 2 | 3 | 4 | 5;
+  broadcastBeatId: BroadcastBeatId;
+  broadcastBeatLabel: string;
+  isLongWaitEligible: boolean;
+  canSkipIntroMotion: boolean;
 }
 
 /** WP-012 unified loading view enforcing strict Quick (100%) and Detailed (4-turn Batch 1) audio gates. */
@@ -401,6 +414,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: false,
       isConfigBlocked: false,
       hostCount,
+      broadcastBeatNumber: 1,
+      broadcastBeatId: "studio_power_up",
+      broadcastBeatLabel: "Studio lights activate",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: true,
     };
   }
 
@@ -421,6 +439,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: false,
       isConfigBlocked: false,
       hostCount,
+      broadcastBeatNumber: 2,
+      broadcastBeatId: "cast_arrival",
+      broadcastBeatLabel: "Kuromates step into studio",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: true,
     };
   }
 
@@ -441,6 +464,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: false,
       isConfigBlocked: false,
       hostCount,
+      broadcastBeatNumber: 1,
+      broadcastBeatId: "idle",
+      broadcastBeatLabel: "Standby",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -476,6 +504,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: false,
       isConfigBlocked: false,
       hostCount: effectiveHostCount,
+      broadcastBeatNumber: 5,
+      broadcastBeatId: "ready_to_broadcast",
+      broadcastBeatLabel: "Broadcast active",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -497,6 +530,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: true,
       isConfigBlocked: true,
       hostCount: effectiveHostCount,
+      broadcastBeatNumber: 3,
+      broadcastBeatId: "recovery_hold",
+      broadcastBeatLabel: "Configuration check paused",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -519,6 +557,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: compilerSnapshot.hasRetryableFailure,
       isConfigBlocked: false,
       hostCount: effectiveHostCount,
+      broadcastBeatNumber: 3,
+      broadcastBeatId: "recovery_hold",
+      broadcastBeatLabel: "Audio compilation blocked",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -541,6 +584,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: true,
       isConfigBlocked: false,
       hostCount: effectiveHostCount,
+      broadcastBeatNumber: 3,
+      broadcastBeatId: "recovery_hold",
+      broadcastBeatLabel: "Retry required before start",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -563,6 +611,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: false,
       isConfigBlocked: false,
       hostCount: effectiveHostCount,
+      broadcastBeatNumber: 5,
+      broadcastBeatId: "ready_to_broadcast",
+      broadcastBeatLabel: "On-air standby locked",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -583,6 +636,11 @@ export function deriveBatchUnifiedLoadingView(input: {
       canRetry: false,
       isConfigBlocked: false,
       hostCount: effectiveHostCount,
+      broadcastBeatNumber: 3,
+      broadcastBeatId: "recovery_hold",
+      broadcastBeatLabel: "Compilation stopped",
+      isLongWaitEligible: false,
+      canSkipIntroMotion: false,
     };
   }
 
@@ -602,5 +660,34 @@ export function deriveBatchUnifiedLoadingView(input: {
     canRetry: false,
     isConfigBlocked: false,
     hostCount: effectiveHostCount,
+    broadcastBeatNumber: 3,
+    broadcastBeatId: "mics_live",
+    broadcastBeatLabel: ready > 0 ? "Microphones lighting up" : "Warming up host microphones",
+    isLongWaitEligible: compilerSnapshot.providerFallbackActivated || ready > 0,
+    canSkipIntroMotion: true,
+  };
+}
+
+/**
+ * Resolves broadcast preparation presentation without ever letting decorative motion skip
+ * bypass audio readiness (`NO AUDIO, NO ADVANCE`).
+ */
+export function resolvePreparationDisplayState(
+  view: BatchLoadingView,
+  options: { skipIntroMotion: boolean },
+): {
+  skipIntroMotion: boolean;
+  canStartPodcast: boolean;
+  ambientHoldActive: boolean;
+} {
+  return {
+    skipIntroMotion: options.skipIntroMotion,
+    canStartPodcast: view.canStartPodcast,
+    ambientHoldActive:
+      !options.skipIntroMotion &&
+      (view.stage === "generating_script" ||
+        view.stage === "validating_script" ||
+        view.stage === "compiling_quick" ||
+        view.stage === "compiling_opening"),
   };
 }

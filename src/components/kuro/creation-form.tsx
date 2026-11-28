@@ -29,6 +29,7 @@ export interface CreationFormProps {
   onHostCountChange: (hostCount: 2 | 3) => void;
   onSubmit: () => void;
   onTrySample: () => void;
+  onBackHome?: () => void;
 }
 
 export function CreationForm({
@@ -45,6 +46,7 @@ export function CreationForm({
   onHostCountChange,
   onSubmit,
   onTrySample,
+  onBackHome,
 }: CreationFormProps) {
   const trimmedLen = input.trim().length;
   const isOverLimit = trimmedLen > INPUT_MAX_CHARS;
@@ -59,21 +61,41 @@ export function CreationForm({
   }
 
   return (
-    <div className="space-y-4">
+    <section aria-label="Podcast generator" className="mx-auto w-full max-w-[920px] space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[var(--kuro-ink)] sm:text-3xl">
+            Create a new episode
+          </h1>
+          <p className="text-pretty-kuro text-xs text-[var(--kuro-ink-muted)] sm:text-sm">
+            Paste study notes or enter a concept — choose your tone, episode length, and Kuromates.
+          </p>
+        </div>
+
+        {onBackHome ? (
+          <button
+            type="button"
+            onClick={onBackHome}
+            className="kuro-interactive min-h-11 rounded-xl border border-[var(--kuro-border)] bg-[var(--kuro-surface)] px-3.5 py-2 text-xs font-bold text-[var(--kuro-ink)] hover:bg-[var(--kuro-surface-muted)] sm:text-sm"
+          >
+            Back to Home
+          </button>
+        ) : null}
+      </div>
+
       <KuromatePreview hostCount={hostCount} />
 
-      <form
-        onSubmit={handleSubmit}
-        noValidate
-        className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:p-5"
-      >
+      <form onSubmit={handleSubmit} noValidate className="kuro-card space-y-4 p-4 sm:p-6">
         <div>
-          <label htmlFor="kuro-topic-input" className="block text-sm font-bold text-slate-950">
+          <label
+            htmlFor="kuro-topic-input"
+            className="block text-sm font-bold text-[var(--kuro-ink)]"
+          >
             Topic or pasted study material
           </label>
-          <p id="kuro-topic-help" className="mt-1 text-xs text-slate-600">
-            Enter {INPUT_MIN_CHARS} to {INPUT_MAX_CHARS.toLocaleString()} characters — paste class
-            notes, a reading excerpt, or a topic you want explained.
+          <p id="kuro-topic-help" className="mt-1 text-xs text-[var(--kuro-ink-muted)]">
+            Enter {INPUT_MIN_CHARS} to {INPUT_MAX_CHARS.toLocaleString()} characters — paste lecture
+            notes, a reading excerpt, or a difficult study question.
           </p>
 
           <textarea
@@ -86,8 +108,10 @@ export function CreationForm({
             placeholder="Paste lecture notes or enter a study topic..."
             aria-invalid={Boolean(fieldError)}
             aria-describedby={describedBy}
-            className={`mt-2 w-full rounded-xl border bg-white px-3 py-2.5 text-base text-slate-950 placeholder:text-slate-500 disabled:bg-slate-100 ${
-              fieldError ? "border-red-500" : "border-slate-300"
+            className={`mt-2 w-full rounded-xl border bg-[var(--kuro-surface)] px-3 py-2.5 text-base text-[var(--kuro-ink)] placeholder:text-[var(--kuro-ink-muted)]/75 disabled:bg-[var(--kuro-surface-muted)] ${
+              fieldError
+                ? "border-[var(--kuro-danger-border)]"
+                : "border-[var(--kuro-border-strong)]"
             }`}
           />
 
@@ -97,7 +121,7 @@ export function CreationForm({
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => onInputChange(STUDY_EXAMPLE)}
-                className="min-h-11 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-60"
+                className="kuro-interactive min-h-11 rounded-xl border border-[var(--kuro-border)] bg-[var(--kuro-surface-muted)] px-3 py-2 text-left text-xs font-semibold text-[var(--kuro-ink)] hover:border-[var(--kuro-border-strong)] disabled:opacity-60"
               >
                 Use study example: Opportunity cost
               </button>
@@ -106,7 +130,7 @@ export function CreationForm({
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => onInputChange("")}
-                  className="min-h-11 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  className="kuro-interactive min-h-11 rounded-xl border border-[var(--kuro-border)] bg-[var(--kuro-surface)] px-3 py-2 text-xs font-semibold text-[var(--kuro-ink)] hover:bg-[var(--kuro-surface-muted)] disabled:opacity-60"
                 >
                   Clear
                 </button>
@@ -115,16 +139,16 @@ export function CreationForm({
 
             <span
               id="kuro-char-count"
-              className={`text-xs font-semibold ${
+              className={`font-mono-kuro text-xs font-semibold ${
                 isOverLimit
-                  ? "text-red-700"
+                  ? "text-[var(--kuro-danger-ink)]"
                   : isApproachingLimit
-                    ? "text-amber-800"
-                    : "text-slate-600"
+                    ? "text-[var(--kuro-warn-ink)]"
+                    : "text-[var(--kuro-ink-muted)]"
               }`}
             >
               {trimmedLen.toLocaleString()} / {INPUT_MAX_CHARS.toLocaleString()}
-              {isApproachingLimit ? " (approaching limit)" : ""}
+              {isApproachingLimit ? " (near limit)" : ""}
             </span>
           </div>
 
@@ -166,29 +190,24 @@ export function CreationForm({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+        <div className="flex flex-col gap-2.5 pt-1 sm:flex-row">
           <button
             type="submit"
             disabled={isSubmitting}
-            className="min-h-12 flex-1 rounded-xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="kuro-interactive min-h-12 flex-1 rounded-xl bg-[var(--kuro-accent)] px-4 py-3 text-sm font-bold text-white hover:bg-[var(--kuro-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSubmitting ? "Preparing conversation..." : "Create conversation"}
+            {isSubmitting ? "Preparing broadcast..." : "Create episode"}
           </button>
           <button
             type="button"
             disabled={isSubmitting}
             onClick={onTrySample}
-            className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
+            className="kuro-interactive min-h-12 rounded-xl border border-[var(--kuro-border-strong)] bg-[var(--kuro-surface)] px-4 py-3 text-sm font-bold text-[var(--kuro-ink)] hover:bg-[var(--kuro-surface-muted)] disabled:opacity-60"
           >
-            Try sample episode
+            Try a sample episode
           </button>
         </div>
-
-        <p className="text-xs text-slate-600">
-          Generates a validated Kuromate conversation script via Gemini when configured, or open
-          Try sample episode for an instant local walkthrough.
-        </p>
       </form>
-    </div>
+    </section>
   );
 }

@@ -7,107 +7,59 @@ export interface AudioStatusBarProps {
   onBackToForm: () => void;
 }
 
-function resolveStatusPill(snapshot: EpisodeBatchCompilerSnapshot): {
-  label: string;
-  toneClass: string;
-} {
-  const hostName = snapshot.activeHost?.name ?? "Kuromate";
-
-  if (snapshot.isSamplePreview) {
-    return {
-      label: "Sample Preview",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.isAutoplayBlocked) {
-    return {
-      label: "Tap to continue audio",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.hasBlockingFailure || snapshot.isConfigBlocked) {
-    return {
-      label: "Compilation stopped",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.hasRetryableFailure) {
-    return {
-      label: "Retry failed turn",
-      toneClass: "border-amber-300 bg-amber-50 text-amber-950",
-    };
-  }
-  if (snapshot.isBufferingAtBoundary) {
-    return {
-      label: `Preparing turns ${snapshot.bufferingTurnRange ?? "next"}…`,
-      toneClass: "border-blue-300 bg-blue-50 text-blue-950",
-    };
-  }
-  if (snapshot.playbackStatus === "complete") {
-    return {
-      label: snapshot.canDownloadAudio ? "Episode complete · Full WAV ready" : "Episode complete",
-      toneClass: "border-emerald-300 bg-emerald-50 text-emerald-950",
-    };
-  }
-  if (snapshot.playbackStatus === "playing") {
-    return {
-      label: snapshot.isInPadding ? "Listening" : `${hostName} speaking`,
-      toneClass: "border-emerald-300 bg-emerald-50 text-emerald-950",
-    };
-  }
-  if (snapshot.playbackStatus === "paused") {
-    return {
-      label: "Paused",
-      toneClass: "border-slate-300 bg-slate-100 text-slate-900",
-    };
-  }
-  return {
-    label: snapshot.canDownloadAudio ? "Full WAV ready" : "Batch ready",
-    toneClass: "border-slate-300 bg-slate-50 text-slate-800",
-  };
-}
-
-/** Concise, accessible compilation and timeline status bar keeping NO AUDIO, NO ADVANCE explicit. */
+/**
+ * Conditional compact boundary & error recovery overlay (`data-kuro-recovery-slot="player-boundary"`).
+ * Renders ONLY when user action or batch-boundary waiting occurs; returns `null` during smooth playback.
+ */
 export function AudioStatusBar({
   snapshot,
   onResumeAutoplay,
   onRetryFailedTurns,
   onBackToForm,
 }: AudioStatusBarProps) {
-  const pill = resolveStatusPill(snapshot);
-  const hostName = snapshot.activeHost?.name ?? snapshot.activeSpeakerId;
-  const hostRole = snapshot.activeHost?.role ?? "explainer";
   const showFailureActions =
     !snapshot.isSamplePreview &&
     (snapshot.hasRetryableFailure || snapshot.hasBlockingFailure || snapshot.isConfigBlocked);
+  const needsOverlay =
+    snapshot.isAutoplayBlocked || snapshot.isBufferingAtBoundary || showFailureActions;
+
+  if (!needsOverlay) {
+    return null;
+  }
+
+  let badgeLabel = `Preparing turns ${snapshot.bufferingTurnRange ?? "next"}…`;
+  let badgeTone = "border-blue-300/60 bg-blue-950/90 text-blue-100";
+
+  if (snapshot.isAutoplayBlocked) {
+    badgeLabel = "Audio paused by browser";
+    badgeTone = "border-amber-300/60 bg-amber-950/90 text-amber-100";
+  } else if (snapshot.hasBlockingFailure || snapshot.isConfigBlocked) {
+    badgeLabel = "Compilation stopped";
+    badgeTone = "border-red-300/60 bg-red-950/90 text-red-100";
+  } else if (snapshot.hasRetryableFailure) {
+    badgeLabel = "Turn preparation paused";
+    badgeTone = "border-amber-300/60 bg-amber-950/90 text-amber-100";
+  }
 
   return (
     <section
-      aria-label="Episode audio status"
-      className="rounded-2xl border border-slate-300 bg-white px-3.5 py-2.5 shadow-xs sm:px-4 sm:py-3"
+      aria-label="Playback recovery"
+      data-kuro-recovery-slot="player-boundary"
+      className="mx-2.5 mb-1.5 rounded-xl border border-white/18 bg-black/82 px-3 py-2 text-white shadow-md backdrop-blur-xs"
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-extrabold text-slate-950 sm:text-sm">{hostName}</span>
-          <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-800">
-            {hostRole}
-          </span>
-          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${pill.toneClass}`}>
-            {pill.label}
-          </span>
-          {!snapshot.isSamplePreview ? (
-            <span className="text-[11px] font-semibold tabular-nums text-slate-700">
-              {snapshot.completedTurns} of {snapshot.totalTurns} turns compiled
-            </span>
-          ) : null}
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span
+          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${badgeTone}`}
+        >
+          {badgeLabel}
+        </span>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           {snapshot.isAutoplayBlocked ? (
             <button
               type="button"
               onClick={onResumeAutoplay}
-              className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 sm:text-sm"
+              className="kuro-interactive min-h-11 rounded-xl bg-[var(--kuro-accent)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[var(--kuro-accent-hover)]"
             >
               Tap to continue audio
             </button>
@@ -119,7 +71,7 @@ export function AudioStatusBar({
                 <button
                   type="button"
                   onClick={onRetryFailedTurns}
-                  className="min-h-11 rounded-xl bg-blue-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-800 sm:text-sm"
+                  className="kuro-interactive min-h-11 rounded-xl bg-[var(--kuro-accent)] px-3 py-1.5 text-xs font-bold text-white hover:bg-[var(--kuro-accent-hover)]"
                 >
                   {snapshot.isConfigBlocked ? "Retry" : "Retry failed turn"}
                 </button>
@@ -127,7 +79,7 @@ export function AudioStatusBar({
               <button
                 type="button"
                 onClick={onBackToForm}
-                className="min-h-11 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 sm:text-sm"
+                className="kuro-interactive min-h-11 rounded-xl border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/20"
               >
                 Cancel and edit
               </button>
@@ -137,8 +89,12 @@ export function AudioStatusBar({
       </div>
 
       {snapshot.isBufferingAtBoundary ? (
-        <p role="status" aria-live="polite" className="mt-1.5 text-xs font-medium text-blue-950">
+        <p role="status" aria-live="polite" className="mt-1 text-[11px] font-medium text-blue-100">
           Paused cleanly at the batch boundary while preparing turns {snapshot.bufferingTurnRange}…
+        </p>
+      ) : snapshot.failureMessage ? (
+        <p role="status" aria-live="polite" className="mt-1 text-[11px] font-medium text-white/85">
+          {snapshot.failureMessage}
         </p>
       ) : null}
     </section>

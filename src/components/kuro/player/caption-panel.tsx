@@ -1,117 +1,69 @@
-import type { CSSProperties } from "react";
 import type { DialogueSegment, Host } from "@contracts/episode.schema";
-import type { AudioAvailability, PlaybackStatus } from "@/hooks/use-episode-playback";
+import type { PlaybackStatus } from "@/hooks/use-episode-playback";
+import type { SubtitleCue } from "@/lib/experience/subtitle-cues";
 
 export interface CaptionPanelProps {
   activeHost: Host | undefined;
   currentSegment: DialogueSegment;
-  currentSegmentIndex: number;
-  totalSegments: number;
-  previousSegment: DialogueSegment | null;
-  previousHost: Host | undefined;
+  activeCue: SubtitleCue | null;
   status: PlaybackStatus;
-  audioAvailability: AudioAvailability;
-  isSamplePreview?: boolean;
-  isBufferingAtBoundary?: boolean;
-  bufferingTurnRange?: string | null;
   onReplay: () => void;
 }
 
+/**
+ * Movie / YouTube-style 1–2 line synchronized subtitle overlay rendered in the lower
+ * safe zone of Depth Plane 4 with names-only screen-reader attribution and 180ms cue motion.
+ */
 export function CaptionPanel({
   activeHost,
   currentSegment,
-  currentSegmentIndex,
-  totalSegments,
-  previousSegment,
-  previousHost,
+  activeCue,
   status,
-  isSamplePreview = false,
-  isBufferingAtBoundary = false,
-  bufferingTurnRange = null,
   onReplay,
 }: CaptionPanelProps) {
   const speakerName = activeHost?.name ?? currentSegment.speakerId;
-  const speakerRole = activeHost?.role;
-  const accentColor = activeHost?.accentColor ?? "#1d4ed8";
-  const panelStyle = { borderLeftColor: accentColor } as CSSProperties;
+  const lines = activeCue?.lines ?? [currentSegment.text];
+  const cueKey = `${currentSegment.id}:${activeCue?.index ?? 0}`;
 
   return (
     <section
-      aria-label="Synchronized captions"
-      style={panelStyle}
-      className="rounded-2xl border border-slate-300 border-l-[6px] bg-white p-3.5 shadow-xs sm:p-4"
+      aria-label="Synchronized subtitles"
+      data-kuro-subtitle-overlay="true"
+      className="flex min-h-[3.35rem] flex-col items-center justify-end gap-1.5 px-3 pb-1"
     >
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <span
-            aria-hidden="true"
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: accentColor }}
-          />
-          <span className="text-sm font-extrabold text-slate-950">{speakerName}</span>
-          {speakerRole ? (
-            <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-800">
-              {speakerRole}
-            </span>
-          ) : null}
-          {isBufferingAtBoundary ? (
-            <span className="rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-950">
-              Preparing turns {bufferingTurnRange ?? "next"}…
-            </span>
-          ) : status === "paused" ? (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-900">
-              Paused
-            </span>
-          ) : null}
-        </div>
-
-        <span className="text-xs font-bold tabular-nums text-slate-700">
-          Turn {currentSegmentIndex + 1} of {totalSegments}
-        </span>
-      </div>
-
-      {isSamplePreview ? (
-        <p className="mb-2 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-950">
-          Sample Preview — built-in timed walkthrough (no live audio keys used)
-        </p>
-      ) : null}
-
-      <div aria-live="polite" aria-atomic="true">
-        <p className="sr-only">
-          {`Turn ${currentSegmentIndex + 1} of ${totalSegments}. ${speakerName}${speakerRole ? `, ${speakerRole}` : ""}: `}
-        </p>
-        <p className="max-w-[65ch] text-base leading-relaxed font-semibold text-slate-950 break-words sm:text-lg">
-          {currentSegment.text}
-        </p>
-      </div>
-
-      {previousSegment ? (
-        <p className="mt-3 border-t border-slate-200 pt-2 text-xs leading-relaxed text-slate-700 break-words">
-          <span className="font-bold text-slate-800">
-            Previous — {previousHost?.name ?? previousSegment.speakerId}:
-          </span>{" "}
-          “{previousSegment.text}”
-        </p>
-      ) : null}
-
       {status === "complete" ? (
         <div
           role="status"
           aria-live="polite"
-          className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2.5"
+          className="flex flex-wrap items-center justify-center gap-2 rounded-xl border border-white/15 bg-black/78 px-3 py-1.5 text-white backdrop-blur-xs"
         >
-          <p className="text-xs font-bold text-emerald-950 sm:text-sm">
-            Episode complete — all hosts returned to idle. Replay anytime or download the transcript.
-          </p>
+          <span className="text-xs font-semibold text-white/90">Episode complete</span>
           <button
             type="button"
             onClick={onReplay}
-            className="min-h-11 rounded-lg bg-emerald-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-900"
+            className="kuro-interactive min-h-11 rounded-lg bg-[var(--kuro-accent)] px-3 py-1.5 text-xs font-extrabold text-white hover:bg-[var(--kuro-accent-hover)]"
           >
-            Replay episode
+            Replay
           </button>
         </div>
-      ) : null}
+      ) : (
+        <div
+          key={cueKey}
+          aria-live="polite"
+          aria-atomic="true"
+          data-cue-index={activeCue?.index ?? 0}
+          className="kuro-subtitle-cue max-w-[36ch] rounded-lg border border-white/12 bg-black/78 px-3 py-1.5 text-center text-[#f9fafb] shadow-sm backdrop-blur-xs"
+        >
+          <span className="sr-only">{speakerName}: </span>
+          <p className="text-[13.5px] leading-[1.35] font-semibold tracking-[0.005em] text-balance break-words sm:text-[14.5px]">
+            {lines.map((line, lineIdx) => (
+              <span key={`${cueKey}-line-${lineIdx}`} className="block">
+                {line}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
     </section>
   );
 }

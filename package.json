@@ -15,7 +15,8 @@
     "test:generation": "node scripts/test-gemini-generation.mjs",
     "test:tts": "node scripts/test-tts.mjs",
     "test:wav": "node scripts/test-wav-stitcher.mjs",
-    "test:audio-queue": "node scripts/test-audio-queue.mjs"
+    "test:audio-queue": "node scripts/test-audio-queue.mjs",
+    "test:experience": "node scripts/test-experience.mjs"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",

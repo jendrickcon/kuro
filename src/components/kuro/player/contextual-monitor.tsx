@@ -4,31 +4,34 @@ import { useEffect, useRef } from "react";
 import { VisualCueSchema, type VisualCue } from "@contracts/episode.schema";
 import { ComparisonVisual } from "@/components/kuro/visuals/comparison-visual";
 import { FactCardVisual } from "@/components/kuro/visuals/fact-card-visual";
-import { NoVisual } from "@/components/kuro/visuals/no-visual";
 import { ProcessVisual } from "@/components/kuro/visuals/process-visual";
 import { TimelineVisual } from "@/components/kuro/visuals/timeline-visual";
+import type { CameraAnchor } from "@/lib/experience/editorial-shot-selector";
 
-const CUE_LABELS: Record<VisualCue["type"], string> = {
+const CUE_LABELS: Record<Exclude<VisualCue["type"], "none">, string> = {
   comparison: "Comparison",
   timeline: "Timeline",
   process: "Process",
   "fact-card": "Key Fact",
-  none: "Standby",
 };
 
 export interface ContextualMonitorProps {
   visualCue: unknown;
-  episodeTitle: string;
   isPlaying: boolean;
-  monitorLabel: string;
+  priority?: "visual" | "speaker" | "cast";
+  speakerAnchor?: CameraAnchor;
 }
 
-/** Studio wall display integrated behind hosts with schema-validated visual fallback. */
+/**
+ * Top safe-zone contextual display in Depth Plane 2 (`data-kuro-slot="contextual-visual"`).
+ * Renders atmospheric lighting & equalizer silhouette when `visualCue.type === "none"` and
+ * glides meaningful semantic HTML charts forward in 3D space when active.
+ */
 export function ContextualMonitor({
   visualCue,
-  episodeTitle,
   isPlaying,
-  monitorLabel,
+  priority = "speaker",
+  speakerAnchor = "closeup-center",
 }: ContextualMonitorProps) {
   const warnedRef = useRef(false);
   const parsed = VisualCueSchema.safeParse(visualCue);
@@ -37,47 +40,64 @@ export function ContextualMonitor({
   useEffect(() => {
     if (!parsed.success && !warnedRef.current && process.env.NODE_ENV === "development") {
       warnedRef.current = true;
-      console.warn("ContextualMonitor received an invalid visualCue; rendering standby.", parsed.error);
+      console.warn("ContextualMonitor received an invalid visualCue; using ambient view.", parsed.error);
     }
   }, [parsed.success, parsed.error]);
 
-  const hasMeaningfulCue = safeCue.type !== "none";
+  const visualSide =
+    speakerAnchor === "visual-left"
+      ? "right"
+      : speakerAnchor === "visual-right"
+        ? "left"
+        : "center";
+
+  if (safeCue.type === "none") {
+    return (
+      <div
+        aria-hidden="true"
+        data-kuro-slot="contextual-visual"
+        data-cue-type="none"
+        data-visual-priority={priority}
+        data-visual-side="center"
+        className="kuro-ambient-backdrop flex w-full items-center justify-center py-1"
+      >
+        <div className="kuro-ambient-equalizer-pill flex items-center gap-2 rounded-full border border-white/10 bg-black/25 px-3 py-1">
+          <div className={`kuro-standby-wave ${isPlaying ? "kuro-standby-wave--active" : ""}`}>
+            <span className="kuro-standby-bar" />
+            <span className="kuro-standby-bar" />
+            <span className="kuro-standby-bar" />
+            <span className="kuro-standby-bar" />
+            <span className="kuro-standby-bar" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <aside
-      aria-label="Studio contextual display"
+      aria-label={CUE_LABELS[safeCue.type]}
+      data-kuro-slot="contextual-visual"
       data-cue-type={safeCue.type}
-      className={`kuro-studio-monitor mx-auto w-full rounded-xl border-2 p-2.5 transition-colors sm:p-3 ${
-        hasMeaningfulCue
-          ? "border-slate-500 bg-slate-950/95 shadow-lg"
-          : "max-w-lg border-slate-600/80 bg-slate-950/85"
-      }`}
+      data-visual-priority={priority}
+      data-visual-side={visualSide}
+      className="kuro-visual-card-3d w-full rounded-[var(--kuro-radius-lg)] border border-white/18 bg-[var(--kuro-studio-surface)]/92 p-2 shadow-lg backdrop-blur-xs"
     >
-      <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-700/80 pb-1.5">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide text-[var(--kuro-studio-ink-muted)]">
           <span
             aria-hidden="true"
-            className={`h-2 w-2 shrink-0 rounded-full ${
-              hasMeaningfulCue ? "bg-sky-400" : isPlaying ? "bg-emerald-400" : "bg-slate-500"
-            }`}
+            className="h-2 w-2 rounded-full bg-[var(--active-host-accent,var(--kuro-accent))]"
           />
-          <span className="truncate text-[11px] font-extrabold tracking-wider text-sky-200">
-            {monitorLabel}
-          </span>
-        </div>
-        <span className="shrink-0 rounded-full border border-slate-600 bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-slate-100">
-          {CUE_LABELS[safeCue.type]}
+          <span>{CUE_LABELS[safeCue.type]}</span>
         </span>
       </div>
 
-      <div className="min-w-0 rounded-lg bg-slate-50 p-2.5 text-slate-950 sm:p-3">
+      <div className="kuro-visual-scroll max-h-[clamp(96px,22dvh,204px)] min-w-0 overflow-y-auto rounded-[var(--kuro-radius-md)] bg-[var(--kuro-surface)] p-2 text-[var(--kuro-ink)]">
         {safeCue.type === "comparison" ? <ComparisonVisual cue={safeCue} /> : null}
         {safeCue.type === "timeline" ? <TimelineVisual cue={safeCue} /> : null}
         {safeCue.type === "process" ? <ProcessVisual cue={safeCue} /> : null}
         {safeCue.type === "fact-card" ? <FactCardVisual cue={safeCue} /> : null}
-        {safeCue.type === "none" ? (
-          <NoVisual episodeTitle={episodeTitle} isPlaying={isPlaying} />
-        ) : null}
       </div>
     </aside>
   );

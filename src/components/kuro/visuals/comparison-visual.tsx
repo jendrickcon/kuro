@@ -4,25 +4,35 @@ type ComparisonCue = Extract<VisualCue, { type: "comparison" }>;
 
 export function ComparisonVisual({ cue }: { cue: ComparisonCue }) {
   const sides = [
-    { key: "left", side: cue.left, accentClass: "border-t-blue-600", badgeClass: "text-blue-900 bg-blue-100" },
-    { key: "right", side: cue.right, accentClass: "border-t-amber-600", badgeClass: "text-amber-950 bg-amber-100" },
+    {
+      key: "left",
+      side: cue.left,
+      accentClass: "border-t-[var(--kuro-accent)]",
+      badgeClass: "bg-[var(--kuro-accent-soft)] text-[var(--kuro-accent-ink)]",
+    },
+    {
+      key: "right",
+      side: cue.right,
+      accentClass: "border-t-[var(--kuro-studio-bg)]",
+      badgeClass: "bg-[var(--kuro-surface-muted)] text-[var(--kuro-ink)]",
+    },
   ];
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-extrabold leading-snug text-slate-950 break-words sm:text-base">
+    <div className="space-y-1.5">
+      <h3 className="font-display text-xs font-extrabold leading-snug text-[var(--kuro-ink)] break-words sm:text-sm">
         {cue.title}
       </h3>
-      <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+      <div className="grid grid-cols-1 gap-1.5 min-[320px]:grid-cols-2">
         {sides.map(({ key, side, accentClass, badgeClass }) => (
           <div
             key={key}
-            className={`min-w-0 rounded-lg border border-slate-300 border-t-4 bg-white p-2.5 shadow-2xs ${accentClass}`}
+            className={`min-w-0 rounded-lg border border-[var(--kuro-border)] border-t-4 bg-[var(--kuro-surface)] p-2 ${accentClass}`}
           >
-            <p className={`inline-block max-w-full rounded px-1.5 py-0.5 text-xs font-extrabold break-words ${badgeClass}`}>
+            <p className={`inline-block max-w-full rounded px-1.5 py-0.5 text-[11px] font-extrabold break-words ${badgeClass}`}>
               {side.label}
             </p>
-            <p className="mt-1.5 text-xs leading-snug font-medium text-slate-900 break-words sm:text-sm">
+            <p className="mt-1 text-xs leading-snug font-medium text-[var(--kuro-ink)] break-words">
               {side.value}
             </p>
           </div>

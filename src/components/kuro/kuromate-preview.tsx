@@ -1,6 +1,10 @@
 import { getFixtureByHostCount } from "@/lib/episode/fixtures";
 
-/** Lightweight shared-desk vignette rendered dynamically from fixture hosts[]. */
+/**
+ * Lightweight studio cast vignette rendered dynamically from fixture hosts[].
+ * Exposes `data-kuro-slot="cast-preview"` so WP-013 can swap bespoke Kuromate artwork
+ * cleanly without altering generator state or layout slots.
+ */
 export function KuromatePreview({ hostCount }: { hostCount: 2 | 3 }) {
   const { hosts } = getFixtureByHostCount(hostCount);
   const summaryText = hosts.map((host) => `${host.name} (${host.role})`).join(" · ");
@@ -8,26 +12,29 @@ export function KuromatePreview({ hostCount }: { hostCount: 2 | 3 }) {
   return (
     <section
       aria-label="Host preview"
-      className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 px-3.5 pt-3 pb-2.5 text-slate-50"
+      data-kuro-slot="cast-preview"
+      className="overflow-hidden rounded-[var(--kuro-radius-xl)] border border-[var(--kuro-studio-border)] bg-[var(--kuro-studio-bg)] px-3.5 pt-3.5 pb-3 text-[var(--kuro-studio-ink)] sm:px-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-bold text-white">Meet your Kuromates</h2>
-          <p className="text-xs text-slate-300">
-            Different perspectives around one shared study desk.
+          <h2 className="font-display text-sm font-bold text-[var(--kuro-studio-ink)]">
+            Selected Kuromate cast
+          </h2>
+          <p className="text-xs text-[var(--kuro-studio-ink-muted)]">
+            Distinct roles collaborating around one study desk.
           </p>
         </div>
-        <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-0.5 text-[11px] font-semibold text-slate-100">
-          {hosts.length} hosts
+        <span className="font-mono-kuro rounded-full border border-[var(--kuro-studio-border)] bg-[var(--kuro-studio-surface)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--kuro-studio-ink)]">
+          {hosts.length} Kuromates
         </span>
       </div>
 
       <div
         aria-hidden="true"
-        className="mt-2.5 flex flex-col items-center rounded-xl border border-slate-700/80 bg-slate-950/60 px-3 pt-2"
+        className="mt-3 flex flex-col items-center rounded-[var(--kuro-radius-md)] border border-[var(--kuro-studio-border)] bg-[var(--kuro-studio-surface)] px-3 pt-2.5"
       >
-        <div className="mb-1.5 inline-flex items-center gap-1.5 rounded border border-slate-600 bg-slate-900 px-2 py-0.5 text-[10px] font-bold tracking-wider text-blue-300">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+        <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-[var(--kuro-studio-border)] bg-[var(--kuro-studio-bg)] px-2.5 py-0.5 text-[10px] font-bold tracking-wider text-[var(--kuro-studio-ink)]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--kuro-accent)]" />
           <span>KURO STAGE</span>
         </div>
 
@@ -57,10 +64,12 @@ export function KuromatePreview({ hostCount }: { hostCount: 2 | 3 }) {
           })}
         </div>
 
-        <div className="-mx-3 h-2.5 w-[106%] rounded-t-[50%] border-t-2 border-slate-400 bg-slate-700" />
+        <div className="-mx-3 h-2.5 w-[106%] rounded-t-[50%] border-t-2 border-white/30 bg-[var(--kuro-studio-surface-hi)]" />
       </div>
 
-      <p className="mt-2 text-center text-xs font-medium capitalize text-slate-200">{summaryText}</p>
+      <p className="mt-2 text-center text-xs font-medium capitalize text-[var(--kuro-studio-ink)]">
+        {summaryText}
+      </p>
     </section>
   );
 }

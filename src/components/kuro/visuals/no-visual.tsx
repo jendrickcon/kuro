@@ -6,12 +6,10 @@ export function NoVisual({
   isPlaying: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-1">
+    <div className="flex items-center justify-between gap-3 py-0.5">
       <div className="min-w-0">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
-          Kuro Studio
-        </p>
-        <p className="mt-0.5 text-xs font-bold text-slate-950 break-words sm:text-sm">
+        <p className="text-[11px] font-semibold text-[var(--kuro-ink-muted)]">Studio focus</p>
+        <p className="mt-0.5 line-clamp-2 text-xs font-bold text-[var(--kuro-ink)] break-words sm:text-sm">
           {episodeTitle}
         </p>
       </div>

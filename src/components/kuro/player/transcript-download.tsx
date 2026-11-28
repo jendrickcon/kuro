@@ -2,60 +2,40 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Episode } from "@contracts/episode.schema";
-import { buildTranscriptFilename, buildTranscriptText } from "@/lib/episode/transcript";
+import { downloadEpisodeTranscriptFile } from "@/lib/experience/downloads";
 
 export function TranscriptDownload({ episode }: { episode: Episode }) {
   const [downloadedMessage, setDownloadedMessage] = useState<string | null>(null);
-  const cleanupTimersRef = useRef<Array<() => void>>([]);
+  const cleanupRef = useRef<Array<() => void>>([]);
 
   useEffect(() => {
     return () => {
-      cleanupTimersRef.current.forEach((cleanup) => cleanup());
-      cleanupTimersRef.current = [];
+      cleanupRef.current.forEach((cleanup) => cleanup());
+      cleanupRef.current = [];
     };
   }, []);
 
   function handleDownload() {
-    const text = buildTranscriptText(episode);
-    const filename = buildTranscriptFilename(episode);
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const objectUrl = URL.createObjectURL(blob);
-
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    let revoked = false;
-    const revokeNow = () => {
-      if (!revoked) {
-        revoked = true;
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-
-    const timerId = window.setTimeout(revokeNow, 1000);
-    cleanupTimersRef.current.push(() => {
-      window.clearTimeout(timerId);
-      revokeNow();
-    });
-
-    setDownloadedMessage(`Transcript downloaded (${filename})`);
+    const res = downloadEpisodeTranscriptFile(episode);
+    cleanupRef.current.push(res.dispose);
+    setDownloadedMessage(`Transcript downloaded (${res.filename})`);
   }
 
   return (
-    <div className="flex flex-col items-stretch sm:items-end">
+    <div className="flex flex-col items-stretch">
       <button
         type="button"
         onClick={handleDownload}
-        className="min-h-11 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-900 hover:bg-slate-100 sm:w-auto sm:text-sm"
+        className="kuro-interactive min-h-11 w-full rounded-xl border border-[var(--kuro-border-strong)] bg-[var(--kuro-surface)] px-3 py-2 text-xs font-bold text-[var(--kuro-ink)] hover:bg-[var(--kuro-surface-muted)]"
       >
         Download transcript (.txt)
       </button>
       {downloadedMessage ? (
-        <p role="status" aria-live="polite" className="mt-1 text-[11px] font-medium text-emerald-800">
+        <p
+          role="status"
+          aria-live="polite"
+          className="mt-1 text-[11px] font-medium text-[var(--kuro-ready-ink)]"
+        >
           {downloadedMessage}
         </p>
       ) : null}

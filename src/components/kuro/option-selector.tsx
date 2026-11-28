@@ -24,7 +24,7 @@ export function OptionSelector<T extends string | number>({
 }: OptionSelectorProps<T>) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1.5 text-sm font-semibold text-slate-900">{legend}</legend>
+      <legend className="mb-1.5 text-sm font-bold text-[var(--kuro-ink)]">{legend}</legend>
       <div className="grid grid-cols-2 gap-2">
         {options.map((opt) => {
           const isSelected = selected === opt.value;
@@ -35,10 +35,10 @@ export function OptionSelector<T extends string | number>({
               disabled={disabled}
               aria-pressed={isSelected}
               onClick={() => onSelect(opt.value)}
-              className={`min-h-11 rounded-xl border-2 px-2.5 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+              className={`kuro-interactive min-h-11 rounded-xl border-2 px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60 ${
                 isSelected
-                  ? "border-slate-950 bg-slate-950 text-white"
-                  : "border-slate-300 bg-white text-slate-900 hover:border-slate-500"
+                  ? "border-[var(--kuro-studio-bg)] bg-[var(--kuro-studio-bg)] text-[var(--kuro-studio-ink)]"
+                  : "border-[var(--kuro-border)] bg-[var(--kuro-surface)] text-[var(--kuro-ink)] hover:border-[var(--kuro-border-strong)]"
               }`}
             >
               <span className="flex items-center gap-1.5 font-semibold">
@@ -49,8 +49,10 @@ export function OptionSelector<T extends string | number>({
               </span>
               {opt.hint ? (
                 <span
-                  className={`mt-0.5 block pl-4 text-[11px] ${
-                    isSelected ? "text-slate-200" : "text-slate-600"
+                  className={`font-mono-kuro mt-0.5 block pl-4 text-[11px] ${
+                    isSelected
+                      ? "text-[var(--kuro-studio-ink-muted)]"
+                      : "text-[var(--kuro-ink-muted)]"
                   }`}
                 >
                   {opt.hint}
