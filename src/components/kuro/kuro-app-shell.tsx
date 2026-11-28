@@ -17,6 +17,7 @@ import { GenerationStatus } from "@/components/kuro/generation-status";
 import { HomeScreen } from "@/components/kuro/home-screen";
 import { EpisodePlayer } from "@/components/kuro/player/episode-player";
 import { SessionEpisodesScreen } from "@/components/kuro/session-episodes-screen";
+import { SplashScreen } from "@/components/kuro/splash-screen";
 import { useSessionEpisodes } from "@/hooks/use-session-episodes";
 import { getSampleEpisode } from "@/lib/episode/fixtures";
 import {
@@ -46,6 +47,7 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
     useSessionEpisodes(ttsRequestIntervalMs);
 
   const [screen, setScreen] = useState<KuroScreen>("home");
+  const [showSplash, setShowSplash] = useState(true);
   const [preparingEntryId, setPreparingEntryId] = useState<string | null>(null);
 
   const [input, setInput] = useState("");
@@ -59,9 +61,29 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
   );
 
   const isSubmittingRef = useRef(false);
+  const didInitHashRef = useRef(false);
   const scriptAbortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const errorCardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (didInitHashRef.current) return;
+    didInitHashRef.current = true;
+    const initialScreen = hashToScreen(window.location.hash);
+    if (initialScreen && initialScreen !== "home") {
+      const plan = resolveScreenNavigation({
+        currentScreen: "home",
+        targetScreen: initialScreen,
+        hasActivePreparation: false,
+        hasActivePlayableSession: false,
+        hasAnyViewableEpisode: false,
+      });
+      window.requestAnimationFrame(() => {
+        setShowSplash(false);
+        setScreen(plan.nextScreen);
+      });
+    }
+  }, []);
 
   const preparingEntry = preparingEntryId ? store.getEntryById(preparingEntryId) : null;
   const loadingView = deriveBatchUnifiedLoadingView({
@@ -360,6 +382,8 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
           : "min-h-screen bg-[var(--kuro-bg)]"
       } text-[var(--kuro-ink)]`}
     >
+      {showSplash ? <SplashScreen onFinish={() => setShowSplash(false)} /> : null}
+
       <AppNavigation
         currentScreen={screen}
         sessionCount={state.entries.length}

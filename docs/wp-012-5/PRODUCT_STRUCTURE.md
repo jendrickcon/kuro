@@ -19,6 +19,8 @@
 
 Kuro runs on `/` as one cohesive client-orchestrated application (preserving clean URL/navigation state without fragmenting in-memory session audio across full page reloads, since compiled `.wav` Blob URLs live strictly in browser memory `[Verified]`):
 
+- **Initial Broadcast Ident (`SplashScreen` + `KuroMascotIdent`, `[Verified]`):** On initial `/` load (empty hash or `#home`), Kuro displays an in-memory ~2.2s studio splash ident featuring a pure inline-SVG + CSS 3D bust of Kuro's non-speaking broadcast microphone mascot (distinct from Kuromate hosts) before cross-fading cleanly into Screen 1 (`Home`). Never replays during in-app screen switches, skips immediately via accessible `Skip` button (`>= 44×44px`), `Escape`, backdrop click, reduced motion (`<= 500ms`), or direct non-home hash links (`#create`, `#prepare`, `#player`, `#episodes`), and uses zero `localStorage` or `sessionStorage`.
+
 ```text
 Kuro App (/)
 ├── Screen 1: Home (/)

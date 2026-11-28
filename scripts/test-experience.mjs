@@ -904,4 +904,56 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
   );
 }
 
+// 31-33. Procedural Kuro mascot bust SVG, in-memory splash ident overlay & deep-link guard
+{
+  const readRel = (p) => fs.readFileSync(path.join(root, p), "utf8");
+  const mascotSrc = readRel("src/components/kuro/kuro-mascot-ident.tsx");
+  const splashSrc = readRel("src/components/kuro/splash-screen.tsx");
+  const shellSrc = readRel("src/components/kuro/kuro-app-shell.tsx");
+
+  const leftEyeBlock = /data-mascot-eye="left"[\s\S]*?<\/g>/.exec(mascotSrc)?.[0] ?? "";
+  const rightEyeBlock = /data-mascot-eye="right"[\s\S]*?<\/g>/.exec(mascotSrc)?.[0] ?? "";
+  const hasMatchingCyanEyes =
+    mascotSrc.includes('KURO_MASCOT_EYE_COLOR = "#38E8FF"') &&
+    leftEyeBlock.includes("KURO_MASCOT_EYE_COLOR") &&
+    rightEyeBlock.includes("KURO_MASCOT_EYE_COLOR") &&
+    !leftEyeBlock.includes("CORAL") &&
+    !rightEyeBlock.includes("CORAL");
+
+  check(
+    mascotSrc.includes('data-kuro-slot="kuro-mascot"') &&
+      mascotSrc.includes('data-mascot-part="halo"') &&
+      mascotSrc.includes('data-mascot-part="mic-grille"') &&
+      mascotSrc.includes('data-mascot-part="lower-collar"') &&
+      mascotSrc.includes('data-mascot-part="headset"') &&
+      mascotSrc.includes('data-mascot-part="cat-points"') &&
+      mascotSrc.includes('data-mascot-part="waveform-smile"') &&
+      hasMatchingCyanEyes &&
+      !/<img\b|<image\b|<canvas\b|from\s+["']three["']|\.png\b|\.jpg\b|\.webp\b|\.glb\b|\.obj\b/i.test(
+        mascotSrc,
+      ),
+    "31. Procedural mascot bust renders broad mic grille, cobalt cat-pointed headset, matching cyan eyes, and waveform smile without images/canvas/three",
+  );
+
+  check(
+    splashSrc.includes('aria-label="Skip intro"') &&
+      splashSrc.includes("min-h-11") &&
+      splashSrc.includes('"Escape"') &&
+      splashSrc.includes("prefers-reduced-motion: reduce") &&
+      splashSrc.includes("clearTimeout") &&
+      splashSrc.includes("Kuro") &&
+      splashSrc.includes("More voices. Clearer ideas.") &&
+      !/Kuro AI|KuroCast|Klaro|localStorage|sessionStorage/i.test(splashSrc),
+    "32. Splash ident exposes accessible >=44px Skip, Escape dismiss, reduced-motion handling, timer cleanup, and approved brand copy",
+  );
+
+  check(
+    shellSrc.includes("<SplashScreen") &&
+      shellSrc.includes("showSplash") &&
+      shellSrc.includes("hashToScreen(window.location.hash)") &&
+      !/localStorage|sessionStorage/i.test(shellSrc),
+    "33. KuroAppShell controls splash strictly in memory and skips automatically on non-home hash deep links",
+  );
+}
+
 console.log(`ALL ${passed} EXPERIENCE ARCHITECTURE TESTS PASSED.`);

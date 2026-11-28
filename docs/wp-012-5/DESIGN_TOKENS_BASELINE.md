@@ -53,9 +53,10 @@ Wrapped cleanly inside `@layer base` in [globals.css](../../src/app/globals.css)
 
 - **Concentric Radii:** `--kuro-radius-sm: 8px`, `--kuro-radius-md: 12px`, `--kuro-radius-lg: 16px`, `--kuro-radius-xl: 20px`.
 - **Interactive Hit Areas:** Minimum `44×44px` (`min-h-11` / `min-h-12`) across buttons, segmented selectors, nav tabs, drawer triggers, overflow items, and timeline slider, with tactile `scale(0.96)` press feedback on `.kuro-interactive:active:not(:disabled)`.
-- **Pure CSS 3D Depth Stack (Zero Canvas / WebGL / Three.js):**
+- **Pure CSS 3D Depth Stack (Zero WebGL / Image Assets):**
   - `.kuro-studio-stage` sets `perspective: 900px` and `--active-host-accent`; `.kuro-stage-architecture` (`transform-style: preserve-3d`) composes overhead speaker-tracking spotlight cone (`.kuro-stage-keylight`), angled acoustic panels (`.kuro-studio-slats` at `rotateY(±16deg)`), and floor perspective grid (`.kuro-stage-horizon` at `rotateX(62deg)`).
   - `.kuro-stage-hosts-stage` (`container-type: inline-size`) animates Kuromates strictly via GPU-composited `transform: translate3d(...) scale(...) rotateY(...)` (`360ms var(--kuro-ease-out)`) from CSS custom properties per `data-camera-anchor`, with `@media (max-height: 600px)` scaling (`0.68`) preventing card/character collisions under `150%` desktop zoom.
+  - **Procedural Mascot Splash Bust (`data-kuro-slot="kuro-mascot"`, [kuro-mascot-ident.tsx](../../src/components/kuro/kuro-mascot-ident.tsx)):** Pure inline SVG + CSS `perspective: 900px` staggered ident (`2.22s` total, `300ms` fade exit): warm golden halo (`#F5BE58`), short broad silver-blue microphone grille with cyan sweep, deep navy headband (`#111C38`) with subtle cat points and cobalt earcups (`#1E4ED8` + cream `#F4E7CE`), matching cyan eyes (`#38E8FF`), smiling waveform mouth, and tiny coral controls (`#F06449`). Reduced motion disables all motion and renders the completed static mascot immediately.
 - **Motion Tokens (Zero `transition: all`, Zero `ease-in`, Zero `opacity: 0` cut blank frames):**
   - Durations: `--kuro-duration-press: 90ms`, `--kuro-duration-fast: 160ms`, `--kuro-duration-base: 240ms`, `--kuro-duration-shot: 280ms`, `--kuro-duration-beat: 420ms`, plus `180ms` subtitle cue reveal (`0.78 -> 1` opacity).
   - Easing: `--kuro-ease-out: cubic-bezier(0.22, 1, 0.36, 1)`, `--kuro-ease-settle: cubic-bezier(0.2, 0, 0, 1)`.

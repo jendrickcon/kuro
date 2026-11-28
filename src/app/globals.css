@@ -1243,12 +1243,169 @@
   }
 }
 
+/* Broadcast Ident Splash Screen & Procedural Mascot CSS 3D Choreography */
+.kuro-splash-overlay {
+  background: radial-gradient(
+    circle at 50% 42%,
+    oklch(0.24 0.032 52) 0%,
+    oklch(0.16 0.02 52) 55%,
+    oklch(0.11 0.015 48) 100%
+  );
+  opacity: 1;
+  transition-property: opacity;
+  transition-duration: 300ms;
+  transition-timing-function: var(--kuro-ease-out);
+}
+
+.kuro-splash-overlay[data-exiting="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.kuro-mascot-stage {
+  perspective: 900px;
+  transform-style: preserve-3d;
+}
+
+.kuro-mascot-sweep {
+  opacity: 0;
+}
+
+.kuro-mascot-stage[data-mascot-mode="splash"] .kuro-mascot-halo {
+  transform-origin: 160px 146px;
+  animation: kuro-mascot-halo-enter 350ms var(--kuro-ease-out) 0ms 1 both;
+}
+
+.kuro-mascot-stage[data-mascot-mode="splash"] .kuro-mascot-mic {
+  transform-origin: 160px 180px;
+  animation: kuro-mascot-mic-enter 550ms var(--kuro-ease-out) 200ms 1 both;
+}
+
+.kuro-mascot-stage[data-mascot-mode="splash"] .kuro-mascot-sweep {
+  animation: kuro-mascot-grille-sweep 650ms var(--kuro-ease-out) 300ms 1 both;
+}
+
+.kuro-mascot-stage[data-mascot-mode="splash"] .kuro-mascot-headset {
+  transform-origin: 160px 108px;
+  animation: kuro-mascot-headset-enter 500ms var(--kuro-ease-out) 500ms 1 both;
+}
+
+.kuro-mascot-stage[data-mascot-mode="splash"] .kuro-mascot-eyes {
+  transform-origin: 160px 130px;
+  animation: kuro-mascot-eyes-enter 400ms var(--kuro-ease-out) 900ms 1 both;
+}
+
+.kuro-mascot-stage[data-mascot-mode="splash"] .kuro-mascot-mouth {
+  stroke-dasharray: 100;
+  animation: kuro-mascot-mouth-draw 450ms var(--kuro-ease-out) 1100ms 1 both;
+}
+
+.kuro-splash-wordmark {
+  animation: kuro-splash-wordmark-enter 450ms var(--kuro-ease-out) 1250ms 1 both;
+}
+
+@keyframes kuro-mascot-halo-enter {
+  0% {
+    opacity: 0;
+    transform: scale3d(0.88, 0.88, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale3d(1, 1, 1);
+  }
+}
+
+@keyframes kuro-mascot-mic-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, -24px) scale3d(0.92, 0.92, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+}
+
+@keyframes kuro-mascot-grille-sweep {
+  0% {
+    opacity: 0;
+    transform: translate3d(-90px, 0, 0) skewX(-22deg);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(185px, 0, 0) skewX(-22deg);
+  }
+}
+
+@keyframes kuro-mascot-headset-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -14px, 0) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes kuro-mascot-eyes-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes kuro-mascot-mouth-draw {
+  0% {
+    opacity: 0.2;
+    stroke-dashoffset: 100;
+  }
+  100% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes kuro-splash-wordmark-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 [data-reduced-motion="true"] *,
 [data-reduced-motion="true"] *::before,
 [data-reduced-motion="true"] *::after {
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
+}
+
+[data-reduced-motion="true"] .kuro-mascot-halo,
+[data-reduced-motion="true"] .kuro-mascot-mic,
+[data-reduced-motion="true"] .kuro-mascot-headset,
+[data-reduced-motion="true"] .kuro-mascot-eyes,
+[data-reduced-motion="true"] .kuro-mascot-mouth,
+[data-reduced-motion="true"] .kuro-splash-wordmark {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  stroke-dashoffset: 0 !important;
+}
+
+[data-reduced-motion="true"] .kuro-mascot-sweep {
+  display: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1273,9 +1430,30 @@
   .kuro-visual-card-3d,
   .kuro-subtitle-cue,
   .kuro-drawer-sheet,
+  .kuro-mascot-halo,
+  .kuro-mascot-mic,
+  .kuro-mascot-headset,
+  .kuro-mascot-eyes,
+  .kuro-mascot-mouth,
+  .kuro-splash-wordmark,
   .kuro-broadcast-ident,
   .kuro-broadcast-holding-bar {
     animation: none !important;
+  }
+
+  .kuro-mascot-halo,
+  .kuro-mascot-mic,
+  .kuro-mascot-headset,
+  .kuro-mascot-eyes,
+  .kuro-mascot-mouth,
+  .kuro-splash-wordmark {
+    opacity: 1 !important;
+    transform: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+
+  .kuro-mascot-sweep {
+    display: none !important;
   }
 
   .kuromate-seat[data-state="speaking"] .kuromate-body,
