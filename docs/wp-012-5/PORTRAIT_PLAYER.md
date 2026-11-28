@@ -1,84 +1,61 @@
 # WP-012.5 — 9:16 Portrait Podcast Player Specification
 
 > **Package:** `WP-012.5` — Product Experience Architecture and Workflow Prototype *(Owner-Led: Jendrick)*
-> **Baseline:** `origin/main` `fe21cf1` (`WP-012` + roadmap sync merged; deterministic `selectEditorialShot` implemented) `[Verified]`
+> **Baseline:** `origin/main` `fe21cf1` · **Refinement:** Immersive 3D-layered Portrait Player, Synchronized 1–2 Line Subtitles, Names-Only Cast Labels & Camera-Seat Separation (`[Verified]`)
 
 ---
 
-## 1. 9:16 Portrait Frame & Safe Zones (`[Proposed]`)
+## 1. Immersive Mobile Frame, Desktop Theater & Safe Zones (`[Verified]`)
 
-Kuro shifts from a wide multi-box desk to a **mobile-first `9:16` portrait studio player** optimized for commuting college students on phones, desktop theater viewing, and vertical screen recording.
+`Screen 4` (`#player`) adapts cleanly between an edge-to-edge vertical mobile broadcast player and a centered desktop theater workspace:
 
 ```text
 ┌─────────────────────────────────────┐
-│ TOP HEADER (compact strip)          │
-│ [← / Episodes]   ON AIR   04 / 12   │
+│ TOP OVERLAY HUD (inside frame)      │
+│ [←]  Title… [Sample]  03/09 [Tx][⋯] │
 ├─────────────────────────────────────┤
-│ TOP ~38%: CONTEXTUAL VISUAL ZONE    │
-│ • VisualCue active -> Chart/Card    │
-│ • VisualCue "none" -> Topic motif   │
-│   & studio lighting depth           │
+│ DEPTH PLANE 1–2 (~35%): STUDIO +    │
+│ • Ambient light / EQ bars on "none" │
+│ • 3D visual card when cue active    │
 ├─────────────────────────────────────┤
-│ MIDDLE ~38%: EDITORIAL KUROMATE     │
-│ • 1 of 5 deterministic camera shots │
-│ • Active speaker focus (Close-Up /  │
-│   Reaction / Two-Shot / Wide /      │
-│   Visual-Explanation shift)         │
-│ • 2.5D CSS depth + mic cue          │
+│ DEPTH PLANE 3 (~35%): KUROMATE STAGE│
+│ • GPU transform camera anchors      │
+│ • Floating names only (Maya/Leo/Sam)│
+│ • Curved 3D broadcast desk rim      │
 ├─────────────────────────────────────┤
-│ BOTTOM ~24%: CAPTIONS & CONTROLS    │
-│ • Active speaker pill + caption     │
-│ • MM:SS ──────●────── MM:SS scrub   │
+│ DEPTH PLANE 4 (~20%): SUBS + DOCK   │
+│ • Conditional recovery overlay      │
+│ • 1–2 line live subtitle overlay    │
+│ • MM:SS / MM:SS scrubber            │
 │ • [Prev] [Play/Pause] [Next] [↻]    │
-│ • [Download .wav] [Download .txt]   │
 └─────────────────────────────────────┘
 ```
 
-### Safe-Zone Rules (`[Proposed]`)
-- **No overlapping collisions:** Contextual visuals NEVER cover the active Kuromate's face/upper torso or drop into the bottom caption zone; captions NEVER cover the playback transport controls.
-- **Mobile (`320px–430px`):** `9:16` stage sits comfortably within viewport width (`max-w-[420px]`, `0` horizontal scroll, caption + controls stay legible down to `320×640`).
-- **Desktop (`1024px–1440px+`):** Portrait stage (`aspect-[9/16]` constrained gracefully to viewport height `min(82vh, 760px)`) sits centered inside a focused studio theater layout, paired optionally with a clean desktop side column showing Episode Title, Topic summary, Turn-Jump Transcript list, and `.wav` / `.txt` download buttons (keeping the primary portrait stage pure and unobstructed).
+### Responsive Layout & Navigation Rules (`[Verified]`)
+- **Mobile Immersive Mode (`< 768px`):** `AppNavigation` top header (`hidden md:block` via `shouldHideMobileAppHeader("player")`) and mobile bottom navigation bar (`shouldShowMobileBottomNav("player") === false`) both hide during playback. `.kuro-portrait-frame` fills `height: 100dvh; width: min(100vw, 430px)` respecting `env(safe-area-inset-top)` / `env(safe-area-inset-bottom)` with zero page scroll down to `320×640` and `260×563` (`390×844 @ 150%`).
+- **Top Overlay HUD & Accessible Drawer / Overflow Menu:** Back (`←`), single-line truncated title, tiny `Sample` pill (Sample Preview only), compact turn counter, `Transcript` drawer button (`lg:hidden`), and `⋯` actions menu (`Download Audio (.wav)`, `Download transcript (.txt)`, `Session episodes`, `Create another episode`) sit cleanly inside the top frame scrim. `TranscriptDrawer` (`role="dialog"`, `aria-modal="true"`) moves focus on open, traps Tab, dismisses on `Escape`/backdrop, restores focus to its trigger, and enables clickable compiled turn jumps.
+- **Desktop Theater (`>= 1024px` / `lg:`):** `AppNavigation` stays visible alongside `lg:grid-cols-[minmax(0,430px)_minmax(0,1fr)]` (`h-[min(86dvh,780px)]`). Episode Overview, `PlayerNotice`, clickable names-only Turn Transcript, `.wav` / `.txt` exports, and session links live strictly in the right companion rail without duplicating below the video.
 
 ---
 
-## 2. Deterministic Editorial Camera Shot Grammar (`[Proposed]`)
+## 2. Stable Studio Seats vs. Independent Editorial Camera Anchors (`[Verified]`)
 
-Instead of keeping all `2` or `3` Kuromates equally sized in fixed seats on every turn, `Screen 4` runs an **editorial camera projection** derived deterministically from `WP-012`'s compiled timeline (`activeSegmentIndex`, `activeHost`, `activeSegment.emotion`, `activeSegment.visualCue`, `playbackStatus`, and `episode.hosts[]` `[Verified]`):
+`selectEditorialShot` separates each host's physical seat identity from transient camera framing and **never** transfers `audioOwnerHostId` away from `activeSegment.speakerId`:
 
-| Shot Type | Deterministic Trigger (`selectEditorialShot`) | Visual Composition (Layered 2.5D CSS + SVG) | Reduced-Motion Equivalent |
-| --- | --- | --- | --- |
-| **1. Current-Speaker Close-Up** *(Default)* | Mid-episode turn (`emotion` `"neutral"`/`"explaining"`, `visualCue.type === "none"`, not boundary/complete) | Active speaker (`audioOwnerHostId`) framed centered (`sizeVariant="closeup"`), active mic LED on owner only. | Static centered speaker frame (`scale` transition disabled). |
-| **2. Reaction Shot** | `activeSegment.emotion === "reacting"` OR (`reactionHostId !== null && reactionHostId !== activeSegment.speakerId`) | Frames reacting host beside active speaker when distinct (`isAudioOwner` stays strictly `false` on listener so non-speaking host never claims audio). | Static reaction posture badge (`Reacting`), zero sweep. |
-| **3. Two-Shot** | `activeSegment.emotion === "curious"` AND `previousHost` exists AND `previousHost.id !== activeSegment.speakerId` | Frames `[previousHost, activeHost]` in original left-to-right cast order (`sizeVariant="standard"`). | Static side-by-side two-host framing. |
-| **4. Wide Opening / Transition / Closing Shot** | `playbackStatus === "complete"` OR `isBufferingAtBoundary` OR `activeSegmentIndex === 0` OR final segment (`segments.length - 1`) | Full dynamic cast (`2` or `3` `hosts[]`) shown together over shared curved desk with role nameplates. | Static full-cast framing (`2` or `3` hosts). |
-| **5. Visual-Explanation Shot** | `activeSegment.visualCue.type !== "none"` (`comparison`, `timeline`, `process`, or `fact-card`) | Upper `ContextualMonitor` receives `priority="visual"` while active speaker docks lower-right (`sizeVariant="docked"`). | Contextual card emphasized cleanly above docked speaker. |
-
-- **Audio boundary integrity:** When `isBufferingAtBoundary === true` (Detailed episode waiting on Batch `k+1`), `isSpeaking` is strictly `false` `[Verified]` — Kuromates settle into calm resting posture (`Preparing turns 5–8…`) with zero false speaking animation.
-
----
-
-## 3. Contextual Visuals Layer (`[Proposed]` & `[Verified]`)
-
-Supports all 5 strict `VisualCueSchema` types from `contracts/episode.schema.ts` `[Verified]` rendered in crisp **semantic HTML + inline SVG** (meeting WCAG 2.2 AA `4.5:1` contrast over studio surfaces, never Canvas/image generation):
-- **`comparison`:** Dual-card contrast layout above/behind speaker (`title`, `left.label/value`, `right.label/value`).
-- **`timeline`:** Horizontal/vertical sequenced node rail (`2–4` points) highlighting progression across the top zone.
-- **`process`:** Compact vertical/stepped flow cards (`3–5` steps) with crisp step indices (`tabular-nums`).
-- **`fact-card`:** Bold hero figure/term (`value`, `tabular-nums`) with concise explanation callout.
-- **`none` (Standby):** Ambient topic-derived studio badge/title light bar (never an ugly blank grey box, and never noisy decorative clutter).
+- **Stable Studio Seat (`data-studio-seat`):** Derived strictly from `episode.hosts.findIndex((h) => h.id === host.id)` (2 hosts: `0 -> left`, `1 -> right`; 3 hosts: `0 -> left`, `1 -> center`, `2 -> right`) — never recomputed from filtered visible hosts.
+- **Camera Anchors (`data-camera-anchor`, animated via GPU `translate3d`/`scale`/`rotateY`):**
+  - `speaker-closeup`: Active speaker centered (`closeup-center`).
+  - `reaction-shot`: Listening/reacting host alongside active speaker (`two-shot-left`/`two-shot-right`) or centered (`reaction-center`), with `data-audio-owner="false"` on listeners.
+  - `two-shot`: Previous + active host in preserved cast order (`two-shot-left`, `two-shot-right`).
+  - `wide-shot`: Opening turn, final turn, playback complete, or boundary standby (`wide-left`, `wide-center`, `wide-right`).
+  - `visual-explanation`: Upper contextual card (`comparison`, `timeline`, `process`, `fact-card`) paired with the speaker anchored on **their own studio side** (`left`/`center -> visual-left`, `right -> visual-right`) so Maya never teleports onto Leo's side.
+- **Names-Only Cast Labels (`[Verified]`):** Permanent `.kuro-nameplate-row` cards, debug shot badges, and rendered role labels (`Explainer`, `Learner`, `Skeptic`, `Idle`, `Listening`, `Captioning`) are omitted from active playback. Visible Kuromates show only sleek floating name pills (`Maya`, `Leo`, `Sam`) with accent dots and speaking LEDs.
 
 ---
 
-## 4. Captions, Transport Controls, Scrubber & Downloads (`[Proposed]` & `[Verified]`)
+## 3. Synchronized 1–2 Line Subtitles & Conditional Recovery (`[Verified]`)
 
-1. **Synchronized Captions (Bottom Safe Zone):**
-   - Displays active Kuromate pill (accent color + non-color role/name text — never color alone) + crisp `text-wrap: pretty` caption line (`<= 320` chars `[Verified]`) + optional subtle previous-line context on taller viewports.
-   - Explicit **`Sample Preview`** badge when `source === "sample"`; honest **`Preparing turns X–Y…`** status banner when Detailed batch boundary is buffering (`NO AUDIO, NO ADVANCE`).
-2. **Timeline Scrubber & Clock:**
-   - Displays `MM:SS / MM:SS` in strict `tabular-nums` (`make-interfaces-feel-better` `[Verified]`).
-   - Accessible `<input type="range">` scrubber (`aria-label`, keyboard Left/Right seek) bounded strictly by `playableRangeMs` (full duration immediately on Quick; expanding dynamically as Detailed batches finish; disabled cleanly in Sample Preview timed mode `[Verified]`).
-3. **Transport & Exports (`>= 44×44px` tap targets, `active:scale-[0.96]`):**
-   - `Prev` · `Play / Pause / Replay` (optically centered triangle/pause icon) · `Next` · `Restart`.
-   - **`Download Audio (.wav)`:** Enabled ONLY when `canDownloadAudio === true` (`100%` of spoken turns compiled & stitched into `fullWavBlob`, disabled with clear tooltip/label during Detailed background compile and on `Sample Preview` `[Verified]`).
-   - **`Download Transcript (.txt)`:** Always enabled inside player (`downloadEpisodeTranscript` `[Verified]`).
-4. **Dynamic 2 vs. 3 Kuromate Support (`hosts[]` `[Verified]`):**
-   - Every shot, nameplate, accent dot, and caption pill iterates dynamically over `episode.hosts[]` — supporting `2` or `3` hosts equally without hard-coded `hostA`/`hostB` logic.
+- **Deterministic Subtitle Segmentation ([subtitle-cues.ts](../../src/lib/experience/subtitle-cues.ts)):** Preserves exact wording and token order across every turn, prefers sentence/clause boundaries (`max 2` rendered lines), keeps short utterances as `1` cue, distributes duration proportionally over `0..durationMs`, and transitions smoothly (`180ms`).
+- **Dual Timing Sources:** Hosted compiled WAV playback derives intra-segment offset from `snapshot.elapsedMs - timeline[i].speechStartMs` (`speechDurationMs`). Sample Preview pairs `useSampleSegmentClock` (`requestAnimationFrame` active only while `isSamplePreview && playbackStatus === "playing"`) with `getSegmentDurationMs(segment)` while leaving `episode-batch-compiler.ts` unmodified.
+- **Conditional Recovery Overlay (`data-kuro-recovery-slot="player-boundary"`):** `AudioStatusBar` returns `null` during smooth playback and renders only on `isAutoplayBlocked`, `isBufferingAtBoundary` (`Preparing turns 5–8…`), `hasRetryableFailure`, `hasBlockingFailure`, or `isConfigBlocked`, preserving `NO AUDIO, NO ADVANCE`.
+- **Dynamic Visual & Download Compliance:** `VisualCueSchema` `none` renders ambient lighting + animated equalizer bars (`0` chunky white Standby box); active cues (`comparison`, `timeline`, `process`, `fact-card`) glide forward inside `clamp(96px, 22dvh, 204px)` (`max-height: 600px` compacts to `76px`). `Download Audio (.wav)` enables only when `100%` of spoken turns stitch cleanly.

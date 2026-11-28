@@ -73,17 +73,25 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
 
   const navigateToScreen = useCallback(
     (target: KuroScreen, pushHistory = true) => {
+      const liveState = store.getState();
+      const liveContinue = store.getContinueListeningEntry();
+      const livePreparing = preparingEntryId ? store.getEntryById(preparingEntryId) : null;
+      const liveActive = liveState.activeEntryId
+        ? liveState.sampleEntry?.entryId === liveState.activeEntryId
+          ? liveState.sampleEntry
+          : store.getEntryById(liveState.activeEntryId)
+        : null;
       const hasActivePreparation =
         scriptPhase !== "idle" ||
-        (preparingEntry !== null && !preparingEntry.snapshot.hasStartedPodcast);
+        (livePreparing !== null && !livePreparing.snapshot.hasStartedPodcast);
       const plan = resolveScreenNavigation({
         currentScreen: screen,
         targetScreen: target,
         hasActivePreparation,
         hasActivePlayableSession: Boolean(
-          activeEntry && activeEntry.snapshot.hasStartedPodcast,
+          liveActive && liveActive.snapshot.hasStartedPodcast,
         ),
-        hasAnyViewableEpisode: Boolean(continueEntry || state.sampleEntry),
+        hasAnyViewableEpisode: Boolean(liveContinue || liveState.sampleEntry),
       });
 
       if (plan.cancelActivePreparation) {
@@ -109,7 +117,7 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
         }
       }
     },
-    [activeEntry, continueEntry, preparingEntry, preparingEntryId, screen, scriptPhase, state.sampleEntry, store],
+    [preparingEntryId, screen, scriptPhase, store],
   );
 
   useEffect(() => {
@@ -342,9 +350,16 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
   }
 
   const showMobileNavPadding = shouldShowMobileBottomNav(screen);
+  const isImmersivePlayer = screen === "player";
 
   return (
-    <div className="min-h-screen bg-[var(--kuro-bg)] text-[var(--kuro-ink)]">
+    <div
+      className={`${
+        isImmersivePlayer
+          ? "min-h-dvh bg-[var(--kuro-studio-bg)] md:min-h-screen md:bg-[var(--kuro-bg)]"
+          : "min-h-screen bg-[var(--kuro-bg)]"
+      } text-[var(--kuro-ink)]`}
+    >
       <AppNavigation
         currentScreen={screen}
         sessionCount={state.entries.length}
@@ -353,9 +368,13 @@ export function KuroAppShell({ ttsRequestIntervalMs }: KuroAppShellProps = {}) {
       />
 
       <main
-        className={`mx-auto w-full max-w-[1160px] px-3 pt-4 sm:px-6 sm:pt-6 ${
-          showMobileNavPadding ? "pb-24 md:pb-10" : "pb-8"
-        }`}
+        className={
+          isImmersivePlayer
+            ? "mx-auto w-full p-0 md:max-w-[1160px] md:px-6 md:pt-5 md:pb-8"
+            : `mx-auto w-full max-w-[1160px] px-3 pt-4 sm:px-6 sm:pt-6 ${
+                showMobileNavPadding ? "pb-24 md:pb-10" : "pb-8"
+              }`
+        }
       >
         {screen === "home" ? (
           <HomeScreen

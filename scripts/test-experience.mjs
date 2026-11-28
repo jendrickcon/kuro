@@ -54,11 +54,20 @@ const {
   canDownloadEpisodeTranscript,
   canDownloadEpisodeWav,
 } = await import("../src/lib/experience/downloads.ts");
-const { selectEditorialShot } = await import("../src/lib/experience/editorial-shot-selector.ts");
+const { selectEditorialShot, resolveStudioSeat } = await import(
+  "../src/lib/experience/editorial-shot-selector.ts"
+);
+const {
+  buildSubtitleCues,
+  resolveActiveSubtitleCue,
+  resolveSegmentTimingWindow,
+} = await import("../src/lib/experience/subtitle-cues.ts");
+const { getSegmentDurationMs } = await import("../src/hooks/use-episode-playback.ts");
 const {
   hashToScreen,
   resolveScreenNavigation,
   screenToHash,
+  shouldHideMobileAppHeader,
   shouldShowMobileBottomNav,
 } = await import("../src/lib/experience/navigation.ts");
 const {
@@ -203,11 +212,16 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
       shouldShowMobileBottomNav("episodes") === true &&
       shouldShowMobileBottomNav("player") === false &&
       shouldShowMobileBottomNav("prepare") === false &&
+      shouldHideMobileAppHeader("player") === true &&
+      shouldHideMobileAppHeader("home") === false &&
+      shouldHideMobileAppHeader("create") === false &&
+      shouldHideMobileAppHeader("prepare") === false &&
+      shouldHideMobileAppHeader("episodes") === false &&
       blockedPlayer.nextScreen === "create" &&
       leavingPrep.cancelActivePreparation === true &&
       leavingPlayer.pauseActivePlayer === true &&
       leavingPlayer.nextScreen === "episodes",
-    "1. Five-screen navigation, Back/Forward hashes, mobile thumb-zone nav hiding, and nav guards work cleanly",
+    "1. Five-screen navigation, Back/Forward hashes, mobile immersive header & thumb-zone nav hiding, and nav guards work cleanly",
   );
 
   const harness = makeCompilerHarness();
@@ -456,10 +470,10 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
     "15. Final segment resolves to wide closing shot",
   );
 
-  // Meaningful visualCue -> visual-explanation
+  // Meaningful visualCue -> visual-explanation with stable speaker side anchor (Maya left, Leo right)
   const cueIdx = ep2.segments.findIndex((s) => s.visualCue.type !== "none");
   const cueSeg = ep2.segments[cueIdx];
-  const shotVisual = selectEditorialShot({
+  const shotVisualMaya = selectEditorialShot({
     episode: ep2,
     activeSegmentIndex: cueIdx,
     activeSegment: cueSeg,
@@ -472,12 +486,33 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
     playbackStatus: "playing",
     isBufferingAtBoundary: false,
   });
+  const leoCueSeg = { ...cueSeg, speakerId: ep2.hosts[1].id };
+  const shotVisualLeo = selectEditorialShot({
+    episode: ep2,
+    activeSegmentIndex: cueIdx,
+    activeSegment: leoCueSeg,
+    previousSegment: cueSeg,
+    activeHost: ep2.hosts[1],
+    previousHost: hMap2.get(cueSeg.speakerId),
+    isSpeaking: true,
+    isInPadding: false,
+    reactionHostId: null,
+    playbackStatus: "playing",
+    isBufferingAtBoundary: false,
+  });
   check(
-    shotVisual.shotType === "visual-explanation" &&
-      shotVisual.visualPriority === "visual" &&
-      shotVisual.speakerDock === "lower-right" &&
-      shotVisual.audioOwnerHostId === cueSeg.speakerId,
-    "16. Meaningful visualCue selects visual-explanation shot with docked speaker",
+    shotVisualMaya.shotType === "visual-explanation" &&
+      shotVisualMaya.visualPriority === "visual" &&
+      shotVisualMaya.speakerStudioSeat === "left" &&
+      shotVisualMaya.speakerCameraAnchor === "visual-left" &&
+      shotVisualMaya.hostFraming[0]?.studioSeat === "left" &&
+      shotVisualMaya.hostFraming[0]?.cameraAnchor === "visual-left" &&
+      shotVisualMaya.audioOwnerHostId === cueSeg.speakerId &&
+      shotVisualLeo.speakerStudioSeat === "right" &&
+      shotVisualLeo.speakerCameraAnchor === "visual-right" &&
+      shotVisualLeo.hostFraming[0]?.studioSeat === "right" &&
+      shotVisualLeo.hostFraming[0]?.cameraAnchor === "visual-right",
+    "16. Visual-explanation keeps Maya anchored visual-left and Leo anchored visual-right without swapping studio seats",
   );
 
   // Reaction shot preserves active audioOwnerHostId (never transfers audio ownership to listener)
@@ -502,13 +537,16 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
     playbackStatus: "playing",
     isBufferingAtBoundary: false,
   });
+  const reactorFraming = shotReact.hostFraming.find((f) => f.hostId === reactorHost.id);
   check(
     shotReact.shotType === "reaction-shot" &&
       shotReact.audioOwnerHostId === speakerHost.id &&
       shotReact.reactionIndicatorHostId === reactorHost.id &&
       shotReact.visibleHostIds.includes(speakerHost.id) &&
-      shotReact.visibleHostIds.includes(reactorHost.id),
-    "18. Reaction shot frames reacting listener while strictly keeping audioOwnerHostId on active speaker",
+      shotReact.visibleHostIds.includes(reactorHost.id) &&
+      reactorFraming?.isAudioOwner === false &&
+      reactorFraming?.studioSeat === "right",
+    "18. Reaction shot frames reacting listener while strictly keeping audioOwnerHostId and seat identity intact",
   );
 
   // Two-shot on curious following different previous host
@@ -637,11 +675,232 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
       globalsCss.includes("@media (prefers-reduced-motion: reduce)") &&
       globalsCss.includes('[data-reduced-motion="true"]') &&
       globalsCss.includes("max-width: 430px") &&
+      globalsCss.includes("perspective: 900px") &&
+      globalsCss.includes("transform-style: preserve-3d") &&
       playerSrc.includes("lg:grid-cols-[minmax(0,430px)_minmax(0,1fr)]") &&
       appShellSrc.includes("Cancel and edit") === false &&
       !schemaText.includes("reactionHostId") &&
       !fs.existsSync(path.join(root, "src/components/kuro/player/audio-preparation-panel.tsx")),
-    "23-27. Zero persistence/Canvas/Three/transition-all/provider-leaks, reduced-motion & portrait containment present, schema unmodified",
+    "23-27. Zero persistence/Canvas/Three/transition-all/provider-leaks, 3D depth CSS, reduced-motion & portrait containment present, schema unmodified",
+  );
+}
+
+// 28-33. Synchronized subtitle cues, seat-vs-camera invariants across cast sizes, names-only & immersive player audit
+{
+  const ep2 = getFixtureByHostCount(2);
+  const ep3 = getFixtureByHostCount(3);
+  const allSegs = [...ep2.segments, ...ep3.segments];
+
+  const allCuesExact = allSegs.every((seg) => {
+    const dur = getSegmentDurationMs(seg);
+    const cues = buildSubtitleCues(seg.text, dur);
+    if (cues.length === 0) return false;
+    const origWords = seg.text.trim().split(/\s+/).filter(Boolean).join(" ");
+    const cueWords = cues
+      .flatMap((c) => c.text.trim().split(/\s+/).filter(Boolean))
+      .join(" ");
+    const validLines = cues.every((c) => c.lines.length >= 1 && c.lines.length <= 2);
+    const validRanges =
+      cues[0].startMs === 0 &&
+      cues[cues.length - 1].endMs === dur &&
+      cues.every((c, idx) => c.endMs > c.startMs && (idx === 0 || c.startMs === cues[idx - 1].endMs));
+    return origWords === cueWords && validLines && validRanges;
+  });
+
+  const shortCues = buildSubtitleCues("Short and clear.", 2800);
+  const clauseText =
+    "Wait, is this real? Yes, time and energy are scarce, so every choice crowds out another option.";
+  const clauseCues = buildSubtitleCues(clauseText, 5200);
+  const breaksAtBoundary =
+    clauseCues.length >= 2 && /[?,.\u2014]$/.test(clauseCues[0].text.trim());
+
+  const longSeg = ep2.segments[5];
+  const sampleDur = getSegmentDurationMs(longSeg);
+  const sampleWinStart = resolveSegmentTimingWindow({
+    segment: longSeg,
+    activeSegmentIndex: 5,
+    isSamplePreview: true,
+    elapsedMs: 12000,
+    timeline: [],
+    sampleIntraElapsedMs: 100,
+  });
+  const sampleWinLate = resolveSegmentTimingWindow({
+    segment: longSeg,
+    activeSegmentIndex: 5,
+    isSamplePreview: true,
+    elapsedMs: 12000,
+    timeline: [],
+    sampleIntraElapsedMs: Math.max(0, sampleDur - 200),
+  });
+  const sampleCues = buildSubtitleCues(longSeg.text, sampleDur);
+  const sampleEarlyCue = resolveActiveSubtitleCue(sampleCues, sampleWinStart.intraElapsedMs);
+  const sampleLateCue = resolveActiveSubtitleCue(sampleCues, sampleWinLate.intraElapsedMs);
+
+  const hostedWin = resolveSegmentTimingWindow({
+    segment: longSeg,
+    activeSegmentIndex: 1,
+    isSamplePreview: false,
+    elapsedMs: 6900,
+    timeline: [
+      {
+        segmentId: "seg_01",
+        order: 0,
+        speakerId: "host_leo",
+        identityProfileId: "kuromate_leo_v1",
+        startSample: 0,
+        endSample: 48000,
+        speechStartMs: 0,
+        speechDurationMs: 2000,
+        startMs: 0,
+        endMs: 2250,
+        paddingAfterMs: 250,
+      },
+      {
+        segmentId: longSeg.id,
+        order: 1,
+        speakerId: "host_maya",
+        identityProfileId: "kuromate_maya_v1",
+        startSample: 54000,
+        endSample: 174000,
+        speechStartMs: 2250,
+        speechDurationMs: 5000,
+        startMs: 2250,
+        endMs: 7500,
+        paddingAfterMs: 250,
+      },
+    ],
+    sampleIntraElapsedMs: 0,
+  });
+  const hostedCue = resolveActiveSubtitleCue(
+    buildSubtitleCues(longSeg.text, hostedWin.durationMs),
+    hostedWin.intraElapsedMs,
+  );
+
+  check(
+    allCuesExact &&
+      shortCues.length === 1 &&
+      clauseCues.length >= 2 &&
+      breaksAtBoundary &&
+      sampleCues.length >= 2 &&
+      sampleEarlyCue !== null &&
+      sampleLateCue !== null &&
+      sampleLateCue.index > sampleEarlyCue.index &&
+      hostedWin.intraElapsedMs === 4650 &&
+      hostedCue !== null &&
+      hostedCue.index > 0,
+    "28. Subtitle cue segmentation preserves exact wording/order, respects clauses, max 2 lines, and advances in both hosted & Sample Preview modes",
+  );
+
+  // Check Maya/Leo/Sam seats across ALL shots and BOTH 3-host orderings ([Maya, Leo, Sam] and [Maya, Sam, Leo])
+  const ep3SamMiddle = structuredClone(ep3);
+  ep3SamMiddle.hosts = [ep3.hosts[0], ep3.hosts[2], ep3.hosts[1]];
+  const hMap2 = new Map(ep2.hosts.map((h) => [h.id, h]));
+
+  const mayaCloseup = selectEditorialShot({
+    episode: ep2,
+    activeSegmentIndex: 1,
+    activeSegment: ep2.segments[1],
+    previousSegment: ep2.segments[0],
+    activeHost: hMap2.get("host_maya"),
+    previousHost: hMap2.get("host_leo"),
+    isSpeaking: true,
+    isInPadding: false,
+    reactionHostId: null,
+    playbackStatus: "playing",
+    isBufferingAtBoundary: false,
+  });
+  const mayaVisual = selectEditorialShot({
+    episode: ep2,
+    activeSegmentIndex: 2,
+    activeSegment: ep2.segments[2],
+    previousSegment: ep2.segments[1],
+    activeHost: hMap2.get("host_maya"),
+    previousHost: hMap2.get("host_maya"),
+    isSpeaking: true,
+    isInPadding: false,
+    reactionHostId: null,
+    playbackStatus: "playing",
+    isBufferingAtBoundary: false,
+  });
+  const leoVisual = selectEditorialShot({
+    episode: ep2,
+    activeSegmentIndex: 2,
+    activeSegment: { ...ep2.segments[2], speakerId: "host_leo" },
+    previousSegment: ep2.segments[1],
+    activeHost: hMap2.get("host_leo"),
+    previousHost: hMap2.get("host_maya"),
+    isSpeaking: true,
+    isInPadding: false,
+    reactionHostId: null,
+    playbackStatus: "playing",
+    isBufferingAtBoundary: false,
+  });
+  const mayaTwoShot = selectEditorialShot({
+    episode: ep2,
+    activeSegmentIndex: 6,
+    activeSegment: { ...ep2.segments[6], speakerId: "host_maya", emotion: "curious" },
+    previousSegment: ep2.segments[5],
+    activeHost: hMap2.get("host_maya"),
+    previousHost: hMap2.get("host_leo"),
+    isSpeaking: true,
+    isInPadding: false,
+    reactionHostId: null,
+    playbackStatus: "playing",
+    isBufferingAtBoundary: false,
+  });
+
+  check(
+    resolveStudioSeat(ep2, "host_maya") === "left" &&
+      resolveStudioSeat(ep2, "host_leo") === "right" &&
+      mayaCloseup.speakerStudioSeat === "left" &&
+      mayaCloseup.speakerCameraAnchor === "closeup-center" &&
+      mayaVisual.speakerStudioSeat === "left" &&
+      mayaVisual.speakerCameraAnchor === "visual-left" &&
+      leoVisual.speakerStudioSeat === "right" &&
+      leoVisual.speakerCameraAnchor === "visual-right" &&
+      mayaTwoShot.hostFraming.map((f) => `${f.hostId}:${f.studioSeat}:${f.cameraAnchor}`).join(",") ===
+        "host_maya:left:two-shot-left,host_leo:right:two-shot-right" &&
+      resolveStudioSeat(ep3SamMiddle, "host_maya") === "left" &&
+      resolveStudioSeat(ep3SamMiddle, "host_sam") === "center" &&
+      resolveStudioSeat(ep3SamMiddle, "host_leo") === "right",
+    "29. Stable studio seats stay pinned per cast member while camera anchors transition cleanly across all shots",
+  );
+
+  // Audit player JSX & CSS for removed nameplates, role labels, previous-turn wall, debug chrome, and accessible drawer
+  const readRel = (p) => fs.readFileSync(path.join(root, p), "utf8");
+  const playerFiles = [
+    "src/components/kuro/player/episode-player.tsx",
+    "src/components/kuro/player/podcast-stage.tsx",
+    "src/components/kuro/player/kuromate-host.tsx",
+    "src/components/kuro/player/contextual-monitor.tsx",
+    "src/components/kuro/player/caption-panel.tsx",
+    "src/components/kuro/player/audio-status-bar.tsx",
+    "src/components/kuro/player/playback-controls.tsx",
+    "src/components/kuro/player/transcript-drawer.tsx",
+  ];
+  const combinedPlayerSrc = playerFiles.map(readRel).join("\n");
+  const globalsCss = readRel("src/app/globals.css");
+  const navSrc = readRel("src/components/kuro/app-navigation.tsx");
+  const drawerSrc = readRel("src/components/kuro/player/transcript-drawer.tsx");
+  const shotSelectorSrc = readRel("src/lib/experience/editorial-shot-selector.ts");
+
+  const bannedDebugAndRoleRe =
+    /kuro-nameplate-row|Previous —|Maya close-up|Closing wide shot|Opening cast wide shot|Visual explanation|STUDIO DISPLAY|speakerRole|hostRole|>\s*\{[^}]*\.role\}|"Explainer"|"Learner"|"Skeptic"|"Idle"|"Listening"|"Captioning"|"Standby"/;
+
+  check(
+    !bannedDebugAndRoleRe.test(combinedPlayerSrc) &&
+      !bannedDebugAndRoleRe.test(shotSelectorSrc) &&
+      !globalsCss.includes(".kuro-nameplate-row") &&
+      navSrc.includes("shouldHideMobileAppHeader") &&
+      navSrc.includes("hidden md:block") &&
+      combinedPlayerSrc.includes('data-kuro-floating-name="true"') &&
+      combinedPlayerSrc.includes("data-studio-seat") &&
+      combinedPlayerSrc.includes("data-camera-anchor") &&
+      drawerSrc.includes('role="dialog"') &&
+      drawerSrc.includes('aria-modal="true"') &&
+      drawerSrc.includes('"Escape"') &&
+      drawerSrc.includes("triggerRef.current?.focus()"),
+    "30. Immersive header hiding, names-only floating labels, Transcript drawer a11y, and debug/role label removal verified",
   );
 }
 

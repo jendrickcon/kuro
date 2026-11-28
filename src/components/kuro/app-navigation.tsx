@@ -1,7 +1,11 @@
 "use client";
 
-import type { KuroNavDestination, KuroScreen } from "@/lib/experience/navigation";
-import { shouldShowMobileBottomNav } from "@/lib/experience/navigation";
+import {
+  shouldHideMobileAppHeader,
+  shouldShowMobileBottomNav,
+  type KuroNavDestination,
+  type KuroScreen,
+} from "@/lib/experience/navigation";
 
 export interface AppNavigationProps {
   currentScreen: KuroScreen;
@@ -23,10 +27,15 @@ export function AppNavigation({
   onNavigate,
 }: AppNavigationProps) {
   const showMobileNav = shouldShowMobileBottomNav(currentScreen);
+  const hideMobileHeader = shouldHideMobileAppHeader(currentScreen);
 
   return (
     <>
-      <header className="sticky top-0 z-30 border-b border-[var(--kuro-border)] bg-[var(--kuro-surface)]/95 backdrop-blur-xs">
+      <header
+        className={`${
+          hideMobileHeader ? "hidden md:block" : "block"
+        } sticky top-0 z-30 border-b border-[var(--kuro-border)] bg-[var(--kuro-surface)]/95 backdrop-blur-xs`}
+      >
         <div className="mx-auto flex h-14 w-full max-w-[1160px] items-center justify-between gap-3 px-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-2.5">
             <button
@@ -95,17 +104,6 @@ export function AppNavigation({
               <span className="rounded-full border border-[var(--kuro-border)] bg-[var(--kuro-surface-muted)] px-2.5 py-1 text-[11px] font-semibold text-[var(--kuro-ink)]">
                 Preparing
               </span>
-            ) : currentScreen === "player" ? (
-              <button
-                type="button"
-                onClick={() => onNavigate("episodes")}
-                className="kuro-interactive inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-[var(--kuro-border)] bg-[var(--kuro-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--kuro-ink)]"
-              >
-                <span>Episodes</span>
-                <span className="font-mono-kuro rounded-full bg-[var(--kuro-surface-muted)] px-1.5 py-0.5 text-[11px]">
-                  {sessionCount}
-                </span>
-              </button>
             ) : (
               <span className="font-mono-kuro rounded-full border border-[var(--kuro-border)] bg-[var(--kuro-surface-muted)] px-2.5 py-1 text-[11px] font-semibold text-[var(--kuro-ink-muted)]">
                 {sessionCount} saved in tab

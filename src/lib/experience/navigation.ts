@@ -25,6 +25,11 @@ export function shouldShowMobileBottomNav(screen: KuroScreen): boolean {
   return screen === "home" || screen === "create" || screen === "episodes";
 }
 
+/** Hide browse header on mobile viewports (< 768px) during immersive portrait playback. */
+export function shouldHideMobileAppHeader(screen: KuroScreen): boolean {
+  return screen === "player";
+}
+
 export interface ScreenNavigationInput {
   currentScreen: KuroScreen;
   targetScreen: KuroScreen;

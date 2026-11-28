@@ -8,6 +8,27 @@ export type EditorialShotType =
   | "wide-shot"
   | "visual-explanation";
 
+export type StudioSeat = "left" | "center" | "right";
+
+export type CameraAnchor =
+  | "closeup-center"
+  | "reaction-center"
+  | "two-shot-left"
+  | "two-shot-right"
+  | "wide-left"
+  | "wide-center"
+  | "wide-right"
+  | "visual-left"
+  | "visual-right";
+
+export interface HostShotFraming {
+  hostId: string;
+  studioSeat: StudioSeat;
+  cameraAnchor: CameraAnchor;
+  isAudioOwner: boolean;
+  isReacting: boolean;
+}
+
 export interface EditorialShotInput {
   episode: Episode;
   activeSegmentIndex: number;
@@ -24,14 +45,39 @@ export interface EditorialShotInput {
 
 export interface EditorialShotDecision {
   shotType: EditorialShotType;
-  shotLabel: string;
   ruleReason: string;
   audioOwnerHostId: string;
   cameraFocusHostId: string;
   reactionIndicatorHostId: string | null;
   visibleHostIds: string[];
   visualPriority: "visual" | "speaker" | "cast";
-  speakerDock: "center" | "lower-right" | "split" | "stage";
+  studioSeats: Readonly<Record<string, StudioSeat>>;
+  speakerStudioSeat: StudioSeat;
+  speakerCameraAnchor: CameraAnchor;
+  hostFraming: HostShotFraming[];
+}
+
+/**
+ * Resolves a host's permanent physical side in the studio strictly from `episode.hosts[]` index,
+ * never from filtered shot visibility, so Maya never inherits Leo's right seat.
+ */
+export function resolveStudioSeat(episode: Episode, hostId: string): StudioSeat {
+  const index = episode.hosts.findIndex((host) => host.id === hostId);
+  if (index < 0) return "left";
+  if (episode.hosts.length <= 2) {
+    return index === 0 ? "left" : "right";
+  }
+  if (index === 0) return "left";
+  if (index === 1) return "center";
+  return "right";
+}
+
+export function resolveEpisodeStudioSeats(episode: Episode): Record<string, StudioSeat> {
+  const map: Record<string, StudioSeat> = {};
+  for (const host of episode.hosts) {
+    map[host.id] = resolveStudioSeat(episode, host.id);
+  }
+  return map;
 }
 
 function orderByEpisodeCast(episode: Episode, candidateIds: string[]): string[] {
@@ -41,19 +87,101 @@ function orderByEpisodeCast(episode: Episode, candidateIds: string[]): string[] 
   return episode.hosts.slice(0, 1).map((host) => host.id);
 }
 
+function wideAnchorForSeat(seat: StudioSeat): CameraAnchor {
+  if (seat === "center") return "wide-center";
+  if (seat === "right") return "wide-right";
+  return "wide-left";
+}
+
+function visualAnchorForSeat(seat: StudioSeat): CameraAnchor {
+  return seat === "right" ? "visual-right" : "visual-left";
+}
+
+function buildDecision(params: {
+  episode: Episode;
+  shotType: EditorialShotType;
+  ruleReason: string;
+  audioOwnerHostId: string;
+  cameraFocusHostId: string;
+  reactionIndicatorHostId: string | null;
+  visibleHostIds: string[];
+  visualPriority: "visual" | "speaker" | "cast";
+}): EditorialShotDecision {
+  const {
+    episode,
+    shotType,
+    ruleReason,
+    audioOwnerHostId,
+    cameraFocusHostId,
+    reactionIndicatorHostId,
+    visibleHostIds,
+    visualPriority,
+  } = params;
+
+  const studioSeats = resolveEpisodeStudioSeats(episode);
+  const orderedVisibleIds = orderByEpisodeCast(episode, visibleHostIds);
+
+  const hostFraming: HostShotFraming[] = orderedVisibleIds.map((hostId, visibleIndex) => {
+    const studioSeat = studioSeats[hostId] ?? "left";
+    let cameraAnchor: CameraAnchor;
+
+    if (shotType === "wide-shot") {
+      cameraAnchor = wideAnchorForSeat(studioSeat);
+    } else if (shotType === "visual-explanation") {
+      cameraAnchor = visualAnchorForSeat(studioSeat);
+    } else if (shotType === "two-shot") {
+      cameraAnchor = visibleIndex === 0 ? "two-shot-left" : "two-shot-right";
+    } else if (shotType === "reaction-shot") {
+      if (orderedVisibleIds.length > 1) {
+        cameraAnchor = visibleIndex === 0 ? "two-shot-left" : "two-shot-right";
+      } else {
+        cameraAnchor = "reaction-center";
+      }
+    } else {
+      cameraAnchor = "closeup-center";
+    }
+
+    return {
+      hostId,
+      studioSeat,
+      cameraAnchor,
+      isAudioOwner: hostId === audioOwnerHostId,
+      isReacting: hostId === reactionIndicatorHostId,
+    };
+  });
+
+  const speakerFraming = hostFraming.find((item) => item.hostId === audioOwnerHostId);
+  const speakerStudioSeat = studioSeats[audioOwnerHostId] ?? "left";
+  const speakerCameraAnchor =
+    speakerFraming?.cameraAnchor ??
+    (shotType === "visual-explanation" ? visualAnchorForSeat(speakerStudioSeat) : "closeup-center");
+
+  return {
+    shotType,
+    ruleReason,
+    audioOwnerHostId,
+    cameraFocusHostId,
+    reactionIndicatorHostId,
+    visibleHostIds: orderedVisibleIds,
+    visualPriority,
+    studioSeats,
+    speakerStudioSeat,
+    speakerCameraAnchor,
+    hostFraming,
+  };
+}
+
 /**
  * Deterministic 5-shot editorial camera selector derived strictly from verified EpisodeSchema
- * fields and EpisodeBatchCompilerSnapshot runtime fields. Never invents schema metadata and
- * never transfers active audio ownership away from `activeSegment.speakerId`.
+ * fields and EpisodeBatchCompilerSnapshot runtime fields. Keeps physical studio seats fixed per
+ * cast member while transitioning camera framing independently, and never transfers audio ownership.
  */
 export function selectEditorialShot(input: EditorialShotInput): EditorialShotDecision {
   const {
     episode,
     activeSegmentIndex,
     activeSegment,
-    activeHost,
     previousHost,
-    isSpeaking,
     isInPadding,
     reactionHostId,
     playbackStatus,
@@ -67,56 +195,53 @@ export function selectEditorialShot(input: EditorialShotInput): EditorialShotDec
     reactionHostId && reactionHostId !== audioOwnerHostId ? reactionHostId : null;
 
   if (playbackStatus === "complete" || isBufferingAtBoundary) {
-    return {
+    return buildDecision({
+      episode,
       shotType: "wide-shot",
-      shotLabel: isBufferingAtBoundary ? "Standby wide shot" : "Closing wide shot",
       ruleReason: isBufferingAtBoundary ? "boundary-buffering-standby" : "playback-complete",
       audioOwnerHostId,
       cameraFocusHostId: audioOwnerHostId,
       reactionIndicatorHostId: null,
       visibleHostIds: episode.hosts.map((host) => host.id),
       visualPriority: "cast",
-      speakerDock: "stage",
-    };
+    });
   }
 
   if (activeSegment && activeSegment.visualCue.type !== "none") {
-    return {
+    return buildDecision({
+      episode,
       shotType: "visual-explanation",
-      shotLabel: "Visual explanation",
       ruleReason: `visual-cue-${activeSegment.visualCue.type}`,
       audioOwnerHostId,
       cameraFocusHostId: audioOwnerHostId,
       reactionIndicatorHostId: distinctReactionId,
       visibleHostIds: [audioOwnerHostId],
       visualPriority: "visual",
-      speakerDock: "lower-right",
-    };
+    });
   }
 
   const isFirstTurn = activeSegmentIndex === 0;
   const isFinalTurn = totalSegments > 0 && activeSegmentIndex === totalSegments - 1;
   if (isFirstTurn || isFinalTurn) {
-    return {
+    return buildDecision({
+      episode,
       shotType: "wide-shot",
-      shotLabel: isFirstTurn ? "Opening cast wide shot" : "Closing cast wide shot",
       ruleReason: isFirstTurn ? "first-segment" : "final-segment",
       audioOwnerHostId,
       cameraFocusHostId: audioOwnerHostId,
       reactionIndicatorHostId: distinctReactionId,
       visibleHostIds: episode.hosts.map((host) => host.id),
       visualPriority: "cast",
-      speakerDock: "stage",
-    };
+    });
   }
 
   if ((activeSegment && activeSegment.emotion === "reacting") || distinctReactionId !== null) {
     const visibleHostIds = distinctReactionId
-      ? orderByEpisodeCast(episode, [audioOwnerHostId, distinctReactionId])
+      ? [audioOwnerHostId, distinctReactionId]
       : [audioOwnerHostId];
-    return {
+    return buildDecision({
+      episode,
       shotType: "reaction-shot",
-      shotLabel: distinctReactionId ? "Listener reaction" : "Reaction shot",
       ruleReason:
         distinctReactionId !== null
           ? isInPadding
@@ -125,11 +250,12 @@ export function selectEditorialShot(input: EditorialShotInput): EditorialShotDec
           : "reacting-segment-emotion",
       audioOwnerHostId,
       cameraFocusHostId: distinctReactionId ?? audioOwnerHostId,
-      reactionIndicatorHostId: distinctReactionId ?? (activeSegment?.emotion === "reacting" ? audioOwnerHostId : null),
+      reactionIndicatorHostId:
+        distinctReactionId ??
+        (activeSegment?.emotion === "reacting" ? audioOwnerHostId : null),
       visibleHostIds,
       visualPriority: "speaker",
-      speakerDock: visibleHostIds.length > 1 ? "split" : "center",
-    };
+    });
   }
 
   if (
@@ -137,29 +263,26 @@ export function selectEditorialShot(input: EditorialShotInput): EditorialShotDec
     previousHost &&
     previousHost.id !== audioOwnerHostId
   ) {
-    return {
+    return buildDecision({
+      episode,
       shotType: "two-shot",
-      shotLabel: "Two-host exchange",
       ruleReason: "curious-speaker-after-previous-host",
       audioOwnerHostId,
       cameraFocusHostId: audioOwnerHostId,
       reactionIndicatorHostId: null,
-      visibleHostIds: orderByEpisodeCast(episode, [previousHost.id, audioOwnerHostId]),
+      visibleHostIds: [previousHost.id, audioOwnerHostId],
       visualPriority: "speaker",
-      speakerDock: "split",
-    };
+    });
   }
 
-  const resolvedSpeakerName = activeHost?.name ?? "Speaker";
-  return {
+  return buildDecision({
+    episode,
     shotType: "speaker-closeup",
-    shotLabel: isSpeaking ? `${resolvedSpeakerName} close-up` : "Speaker framing",
     ruleReason: "default-active-speaker",
     audioOwnerHostId,
     cameraFocusHostId: audioOwnerHostId,
     reactionIndicatorHostId: null,
     visibleHostIds: [audioOwnerHostId],
     visualPriority: "speaker",
-    speakerDock: "center",
-  };
+  });
 }

@@ -7,12 +7,12 @@
 
 ## 1. Typography (`next/font/google`)
 
-Verified supported in Next.js `16.4.6` (`subsets: ["latin"]`, `display: "swap"`):
+Wrapped cleanly inside `@layer base` in [globals.css](../../src/app/globals.css) so Tailwind `@layer utilities` classes such as `.truncate` (`white-space: nowrap`) always take precedence on single-line player headers:
 
 | Role | CSS Variable | Google Font | Usage |
 | --- | --- | --- | --- |
 | **Display** | `--font-display` | `Bricolage_Grotesque` | Headings (`h1–h3`, `.font-display`), `text-wrap: balance` |
-| **Body / UI** | `--font-sans` (`--font-body`) | `Onest` | Labels, forms, captions (`text-wrap: pretty`), descriptions |
+| **Body / UI** | `--font-sans` (`--font-body`) | `Onest` | Labels, forms, captions (`text-wrap: pretty`), synchronized subtitles |
 | **Mono / Timing** | `--font-mono` | `JetBrains_Mono` | Clocks (`MM:SS / MM:SS`), turn counters, character count (`tabular-nums`) |
 
 ---
@@ -23,8 +23,8 @@ Verified supported in Next.js `16.4.6` (`subsets: ["latin"]`, `display: "swap"`)
 | Token | OKLCH Value | Purpose |
 | --- | --- | --- |
 | `--kuro-bg` | `oklch(0.974 0.009 78)` | App warm paper background |
-| `--kuro-surface` | `oklch(0.996 0.004 78)` | Cards, generator form, caption & transport dock |
-| `--kuro-surface-muted` | `oklch(0.946 0.012 75)` | Secondary bands, status bar, nav hover fills |
+| `--kuro-surface` | `oklch(0.996 0.004 78)` | Cards, generator form, transcript drawer & desktop rail |
+| `--kuro-surface-muted` | `oklch(0.946 0.012 75)` | Secondary bands & nav hover fills |
 | `--kuro-ink` | `oklch(0.205 0.018 52)` | Primary copy & headings (`>= 12:1` on surface) |
 | `--kuro-ink-muted` | `oklch(0.45 0.017 56)` | Supporting copy (`>= 4.5:1` on surface) |
 | `--kuro-border` | `oklch(0.868 0.014 72)` | Structural card dividers |
@@ -33,41 +33,39 @@ Verified supported in Next.js `16.4.6` (`subsets: ["latin"]`, `display: "swap"`)
 ### Dark Broadcast Stage & Semantic Accents
 | Token | OKLCH Value | Purpose |
 | --- | --- | --- |
-| `--kuro-studio-bg` | `oklch(0.185 0.018 50)` | Portrait player backdrop & dark active pills |
-| `--kuro-studio-surface` | `oklch(0.235 0.02 52)` | Broadcast prep panel & monitor bezel |
+| `--kuro-studio-bg` | `oklch(0.185 0.018 50)` | Portrait player backdrop & immersive mobile shell fill |
+| `--kuro-studio-surface` | `oklch(0.235 0.02 52)` | Broadcast prep panel & 3D visual bezel |
 | `--kuro-studio-surface-hi` | `oklch(0.29 0.021 54)` | Desk surface rim gradient stop |
-| `--kuro-studio-ink` | `oklch(0.962 0.008 75)` | High-contrast stage foreground text |
+| `--kuro-studio-ink` | `oklch(0.962 0.008 75)` | High-contrast stage & subtitle text |
 | `--kuro-studio-ink-muted` | `oklch(0.785 0.015 70)` | Secondary stage labels |
 | `--kuro-studio-border` | `oklch(0.38 0.018 56)` | Stage borders & chip dividers |
 | `--kuro-accent` | `oklch(0.505 0.168 33)` | Primary CTA terracotta-vermilion (`>= 5:1` with white text) |
 | `--kuro-accent-hover` | `oklch(0.435 0.168 33)` | Primary button hover fill |
 | `--kuro-accent-soft` | `oklch(0.948 0.028 40)` | Active step / turn highlight tint |
 | `--kuro-accent-ink` | `oklch(0.365 0.132 33)` | Dark ink paired with `--kuro-accent-soft` |
-| `--kuro-on-air` | `oklch(0.545 0.202 27)` | Active `ON AIR` broadcast badge |
+| `--kuro-on-air` | `oklch(0.545 0.202 27)` | Recording/live signal accent |
 | `--kuro-ready-*` / `--kuro-warn-*` / `--kuro-danger-*` | Semantic green / amber / red pairs | Session readiness, Sample/boundary notices, recoverable errors |
 | `--kuro-focus-ring` | `oklch(0.51 0.17 33)` | `2.5px` visible keyboard `:focus-visible` outline (`2px` offset) |
 
 ---
 
-## 3. Radii, Elevation, Targets & Motion
+## 3. Radii, 4-Plane 3D Studio CSS, Targets & Motion
 
 - **Concentric Radii:** `--kuro-radius-sm: 8px`, `--kuro-radius-md: 12px`, `--kuro-radius-lg: 16px`, `--kuro-radius-xl: 20px`.
-- **Elevation:** Structural `1px` `--kuro-border` combined with restrained `box-shadow` (`0 1px 2px ...` on `.kuro-card`, deeper studio theater drop shadow on `.kuro-portrait-frame`).
-- **Interactive Hit Areas:** Minimum `44×44px` (`min-h-11` / `min-h-12`) across buttons, segmented selectors, nav tabs, and timeline slider, with tactile `scale(0.96)` press feedback on `.kuro-interactive:active:not(:disabled)`.
-- **Motion Tokens (Zero `transition: all`, Zero `ease-in`):**
-  - Durations: `--kuro-duration-press: 90ms`, `--kuro-duration-fast: 160ms`, `--kuro-duration-base: 240ms`, `--kuro-duration-shot: 280ms`, `--kuro-duration-beat: 420ms`.
+- **Interactive Hit Areas:** Minimum `44×44px` (`min-h-11` / `min-h-12`) across buttons, segmented selectors, nav tabs, drawer triggers, overflow items, and timeline slider, with tactile `scale(0.96)` press feedback on `.kuro-interactive:active:not(:disabled)`.
+- **Pure CSS 3D Depth Stack (Zero Canvas / WebGL / Three.js):**
+  - `.kuro-studio-stage` sets `perspective: 900px` and `--active-host-accent`; `.kuro-stage-architecture` (`transform-style: preserve-3d`) composes overhead speaker-tracking spotlight cone (`.kuro-stage-keylight`), angled acoustic panels (`.kuro-studio-slats` at `rotateY(±16deg)`), and floor perspective grid (`.kuro-stage-horizon` at `rotateX(62deg)`).
+  - `.kuro-stage-hosts-stage` (`container-type: inline-size`) animates Kuromates strictly via GPU-composited `transform: translate3d(...) scale(...) rotateY(...)` (`360ms var(--kuro-ease-out)`) from CSS custom properties per `data-camera-anchor`, with `@media (max-height: 600px)` scaling (`0.68`) preventing card/character collisions under `150%` desktop zoom.
+- **Motion Tokens (Zero `transition: all`, Zero `ease-in`, Zero `opacity: 0` cut blank frames):**
+  - Durations: `--kuro-duration-press: 90ms`, `--kuro-duration-fast: 160ms`, `--kuro-duration-base: 240ms`, `--kuro-duration-shot: 280ms`, `--kuro-duration-beat: 420ms`, plus `180ms` subtitle cue reveal (`0.78 -> 1` opacity).
   - Easing: `--kuro-ease-out: cubic-bezier(0.22, 1, 0.36, 1)`, `--kuro-ease-settle: cubic-bezier(0.2, 0, 0, 1)`.
-  - **Reduced motion:** Full `@media (prefers-reduced-motion: reduce)` and `[data-reduced-motion="true"]` rules disable entrance sweeps/ambient loops while retaining static active-speaker posture and state badges.
+  - **Reduced motion:** Full `@media (prefers-reduced-motion: reduce)` and `[data-reduced-motion="true"]` rules disable ambient loops, subtitle/drawer entrance shifts, and 3D camera glides while preserving static posture and state cues.
 
 ---
 
-## 4. Breakpoints, Portrait Safe Zones & Extension Boundaries
+## 4. Breakpoints, Portrait Containment & Extension Boundaries
 
-- **Breakpoints:** Compact Mobile `320px–430px` -> Tablet `768px` -> Desktop Theater `1024px+` (`1160px` container cap; side-by-side `minmax(0,430px) minmax(0,1fr)` on `lg`).
-- **9:16 Portrait Safe Zones (`.kuro-portrait-frame`, `max-width: 430px`):**
-  - **Top (~38% guidance):** `.kuro-stage-visual-zone` (`ContextualMonitor`) rendered in flow layout above hosts.
-  - **Middle (~38% guidance):** `.kuro-stage-hosts-zone` (editorial Kuromate shot + shared curved desk & role nameplates).
-  - **Bottom (~24% guidance):** `CaptionPanel` + `AudioStatusBar` + `PlaybackControls` (scrubber, 4 transport actions, `.wav` & `.txt` downloads) stacked cleanly with zero clipping down to `320×640` and `150%` zoom.
+- **Breakpoints:** Compact Mobile `260px–430px` (`100dvh` edge-to-edge player on `< 768px`) -> Tablet `768px` (`430px × min(86dvh, 780px)` centered frame) -> Desktop Theater `1024px+` (`lg:grid-cols-[minmax(0,430px)_minmax(0,1fr)]` with side rail).
 - **WP-013 & WP-016 Seam Attributes (do not break in downstream packages):**
-  - **WP-013 Visual/Character Replacement:** `[data-kuro-slot="cast-preview"]`, `[data-kuro-slot="kuromate-renderer"]` (honoring `data-audio-owner`, `data-state`, `data-size-variant`, `data-role`), `[data-kuro-slot="contextual-visual"]`.
+  - **WP-013 Visual/Character Replacement:** `[data-kuro-slot="cast-preview"]`, `[data-kuro-slot="kuromate-renderer"]` (exposing `data-host-id`, `data-kuromate-identity`, `data-studio-seat`, `data-camera-anchor`, `data-audio-owner`, `data-state`, `data-size-variant`, `data-role`), `[data-kuro-slot="contextual-visual"]`.
   - **WP-016 Reliability/Recovery Placement:** `[data-kuro-recovery-slot="form-error"]`, `[data-kuro-recovery-slot="preparation"]`, `[data-kuro-recovery-slot="player-boundary"]`.
