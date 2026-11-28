@@ -43,6 +43,7 @@ export function PodcastStage({
     episode.hosts.findIndex((host) => host.id === shotDecision.audioOwnerHostId),
   );
   const activeSpeakerHost = hostById.get(shotDecision.audioOwnerHostId) ?? episode.hosts[0];
+  const hasVisualCue = currentSegment.visualCue.type !== "none";
   const stageStyle = {
     "--active-host-accent": activeSpeakerHost?.accentColor ?? "#c2552b",
   } as CSSProperties;
@@ -108,6 +109,7 @@ export function PodcastStage({
       data-audio-owner={shotDecision.audioOwnerHostId}
       data-speaker-seat={shotDecision.speakerStudioSeat}
       data-speaker-anchor={shotDecision.speakerCameraAnchor}
+      data-has-visual={hasVisualCue ? "true" : "false"}
       style={stageStyle}
       className="kuro-studio-stage relative flex min-h-0 flex-1 flex-col justify-between overflow-hidden text-[var(--kuro-studio-ink)]"
     >
@@ -121,7 +123,11 @@ export function PodcastStage({
       </div>
 
       {/* Depth Plane 2 (~35%): Contextual Visual Display / Clean Atmospheric Backdrop */}
-      <div className="kuro-stage-visual-zone relative z-10 shrink-0 px-3 pt-[calc(max(0.45rem,env(safe-area-inset-top))+3.15rem)]">
+      <div
+        className={`kuro-stage-visual-zone z-10 px-3 pt-[calc(max(0.45rem,env(safe-area-inset-top))+3.5rem)] ${
+          hasVisualCue ? "relative shrink-0" : "pointer-events-none absolute inset-x-0 top-0"
+        }`}
+      >
         <ContextualMonitor
           visualCue={currentSegment.visualCue}
           isPlaying={status === "playing" && !isPreparingAudio}
@@ -131,7 +137,11 @@ export function PodcastStage({
       </div>
 
       {/* Depth Plane 3 (~35%): Camera-Tracked Kuromates & Curved Studio Desk */}
-      <div className="kuro-stage-hosts-zone relative z-20 flex min-h-0 flex-1 flex-col justify-end px-2 pt-2">
+      <div
+        className={`kuro-stage-hosts-zone relative z-20 flex min-h-0 flex-1 flex-col justify-end px-2 ${
+          hasVisualCue ? "pt-3.5" : "pt-2"
+        }`}
+      >
         <div className="kuro-stage-hosts-stage">
           {shotDecision.hostFraming.map((framing) => {
             const host = hostById.get(framing.hostId);

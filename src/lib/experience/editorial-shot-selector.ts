@@ -19,6 +19,7 @@ export type CameraAnchor =
   | "wide-center"
   | "wide-right"
   | "visual-left"
+  | "visual-center"
   | "visual-right";
 
 export interface HostShotFraming {
@@ -93,8 +94,9 @@ function wideAnchorForSeat(seat: StudioSeat): CameraAnchor {
   return "wide-left";
 }
 
-function visualAnchorForSeat(seat: StudioSeat): CameraAnchor {
-  return seat === "right" ? "visual-right" : "visual-left";
+/** Center-bottom dock beneath contextual visuals while physical studioSeat stays pinned per host. */
+function visualAnchorForSeat(): CameraAnchor {
+  return "visual-center";
 }
 
 function buildDecision(params: {
@@ -128,7 +130,7 @@ function buildDecision(params: {
     if (shotType === "wide-shot") {
       cameraAnchor = wideAnchorForSeat(studioSeat);
     } else if (shotType === "visual-explanation") {
-      cameraAnchor = visualAnchorForSeat(studioSeat);
+      cameraAnchor = visualAnchorForSeat();
     } else if (shotType === "two-shot") {
       cameraAnchor = visibleIndex === 0 ? "two-shot-left" : "two-shot-right";
     } else if (shotType === "reaction-shot") {
@@ -154,7 +156,7 @@ function buildDecision(params: {
   const speakerStudioSeat = studioSeats[audioOwnerHostId] ?? "left";
   const speakerCameraAnchor =
     speakerFraming?.cameraAnchor ??
-    (shotType === "visual-explanation" ? visualAnchorForSeat(speakerStudioSeat) : "closeup-center");
+    (shotType === "visual-explanation" ? visualAnchorForSeat() : "closeup-center");
 
   return {
     shotType,

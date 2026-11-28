@@ -504,15 +504,15 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
     shotVisualMaya.shotType === "visual-explanation" &&
       shotVisualMaya.visualPriority === "visual" &&
       shotVisualMaya.speakerStudioSeat === "left" &&
-      shotVisualMaya.speakerCameraAnchor === "visual-left" &&
+      shotVisualMaya.speakerCameraAnchor === "visual-center" &&
       shotVisualMaya.hostFraming[0]?.studioSeat === "left" &&
-      shotVisualMaya.hostFraming[0]?.cameraAnchor === "visual-left" &&
+      shotVisualMaya.hostFraming[0]?.cameraAnchor === "visual-center" &&
       shotVisualMaya.audioOwnerHostId === cueSeg.speakerId &&
       shotVisualLeo.speakerStudioSeat === "right" &&
-      shotVisualLeo.speakerCameraAnchor === "visual-right" &&
+      shotVisualLeo.speakerCameraAnchor === "visual-center" &&
       shotVisualLeo.hostFraming[0]?.studioSeat === "right" &&
-      shotVisualLeo.hostFraming[0]?.cameraAnchor === "visual-right",
-    "16. Visual-explanation keeps Maya anchored visual-left and Leo anchored visual-right without swapping studio seats",
+      shotVisualLeo.hostFraming[0]?.cameraAnchor === "visual-center",
+    "16. Visual-explanation keeps Maya in left seat and Leo in right seat while center-docking visual-center beneath visuals",
   );
 
   // Reaction shot preserves active audioOwnerHostId (never transfers audio ownership to listener)
@@ -855,15 +855,15 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
       mayaCloseup.speakerStudioSeat === "left" &&
       mayaCloseup.speakerCameraAnchor === "closeup-center" &&
       mayaVisual.speakerStudioSeat === "left" &&
-      mayaVisual.speakerCameraAnchor === "visual-left" &&
+      mayaVisual.speakerCameraAnchor === "visual-center" &&
       leoVisual.speakerStudioSeat === "right" &&
-      leoVisual.speakerCameraAnchor === "visual-right" &&
+      leoVisual.speakerCameraAnchor === "visual-center" &&
       mayaTwoShot.hostFraming.map((f) => `${f.hostId}:${f.studioSeat}:${f.cameraAnchor}`).join(",") ===
         "host_maya:left:two-shot-left,host_leo:right:two-shot-right" &&
       resolveStudioSeat(ep3SamMiddle, "host_maya") === "left" &&
       resolveStudioSeat(ep3SamMiddle, "host_sam") === "center" &&
       resolveStudioSeat(ep3SamMiddle, "host_leo") === "right",
-    "29. Stable studio seats stay pinned per cast member while camera anchors transition cleanly across all shots",
+    "29. Stable studio seats stay pinned per cast member while camera anchors center-dock visuals cleanly across all shots",
   );
 
   // Audit player JSX & CSS for removed nameplates, role labels, previous-turn wall, debug chrome, and accessible drawer
@@ -894,6 +894,8 @@ function makeCompilerHarness({ allowNoKeyError = false } = {}) {
       navSrc.includes("shouldHideMobileAppHeader") &&
       navSrc.includes("hidden md:block") &&
       combinedPlayerSrc.includes('data-kuro-floating-name="true"') &&
+      combinedPlayerSrc.includes('className="kuromate-figure"') &&
+      combinedPlayerSrc.includes("data-has-visual") &&
       combinedPlayerSrc.includes("data-studio-seat") &&
       combinedPlayerSrc.includes("data-camera-anchor") &&
       drawerSrc.includes('role="dialog"') &&

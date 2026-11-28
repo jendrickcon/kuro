@@ -59,50 +59,54 @@ export function KuromateHost({
       className="kuromate-seat"
       style={accentStyle}
     >
-      <div aria-hidden="true" className="kuromate-stage-light" />
-      <div aria-hidden="true" className="kuromate-desk-shadow" />
+      <div className="kuromate-figure">
+        <div aria-hidden="true" className="kuromate-stage-light" />
+        <div aria-hidden="true" className="kuromate-desk-shadow" />
 
-      <div aria-hidden="true" className="kuromate-body">
-        <div className="kuromate-crest">
-          <span className="kuromate-crest-a" />
-          <span className="kuromate-crest-b" />
-        </div>
-
-        <div className="kuromate-head">
-          <span className="kuromate-head-highlight" />
-          <span className="kuromate-rim-sheen" />
-          <div className="kuromate-eyes">
-            <span className="kuromate-eye kuromate-eye--left" />
-            <span className="kuromate-eye kuromate-eye--right" />
+        <div aria-hidden="true" className="kuromate-body">
+          <div className="kuromate-crest">
+            <span className="kuromate-crest-a" />
+            <span className="kuromate-crest-b" />
           </div>
-          <div className="kuromate-mouth">
-            <span className="kuromate-wave-bar" />
-            <span className="kuromate-wave-bar" />
-            <span className="kuromate-wave-bar" />
+
+          <div className="kuromate-head">
+            <span className="kuromate-head-highlight" />
+            <span className="kuromate-rim-sheen" />
+            <div className="kuromate-eyes">
+              <span className="kuromate-eye kuromate-eye--left" />
+              <span className="kuromate-eye kuromate-eye--right" />
+            </div>
+            <div className="kuromate-mouth">
+              <span className="kuromate-wave-bar" />
+              <span className="kuromate-wave-bar" />
+              <span className="kuromate-wave-bar" />
+            </div>
           </div>
-        </div>
 
-        <div className="kuromate-torso-wrap">
-          <span className="kuromate-arm kuromate-arm--left">
-            <span className="kuromate-hand" />
-          </span>
-          <div className="kuromate-torso">
-            <span className="kuromate-collar" />
-            <span className="kuromate-badge" />
+          <div className="kuromate-torso-wrap">
+            <span className="kuromate-arm kuromate-arm--left">
+              <span className="kuromate-hand" />
+            </span>
+            <div className="kuromate-torso">
+              <span className="kuromate-collar" />
+              <span className="kuromate-badge" />
+            </div>
+            <span className="kuromate-arm kuromate-arm--right">
+              <span className="kuromate-hand" />
+            </span>
           </div>
-          <span className="kuromate-arm kuromate-arm--right">
-            <span className="kuromate-hand" />
-          </span>
+
+          <div className="kuromate-lower" />
         </div>
 
-        <div className="kuromate-lower" />
-      </div>
-
-      <div aria-hidden="true" className="kuromate-mic">
-        <div className="kuromate-mic-head">
-          <span className="kuromate-mic-led" />
+        <div aria-hidden="true" className="kuromate-mic">
+          <div className="kuromate-mic-head">
+            <span className="kuromate-mic-grille" />
+            <span className="kuromate-mic-led" />
+          </div>
+          <div className="kuromate-mic-neck" />
+          <div className="kuromate-mic-boom" />
         </div>
-        <div className="kuromate-mic-neck" />
       </div>
 
       <div
